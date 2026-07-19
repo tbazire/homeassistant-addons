@@ -6,10 +6,16 @@
 #
 # Checks performed:
 #   - Go: gofmt + go vet + go test on eebusd AND eebus-bridge.
-#   - Shell: shellcheck on run.sh.
-#   - YAML: yamllint on config/translations/workflows.
+#   - Shell: shellcheck on our own scripts (NOT vendored ones).
+#   - YAML: yamllint on our own YAML configs (NOT vendored ones).
+#   - SPDX: Apache-2.0 header present on our own source files only.
 #   - Add-on schema: python tests/test_config_validation.py asserts the
 #     security posture of config.yaml (no privileged, init:false, etc.).
+#
+# IMPORTANT scope rule across all jobs: the eebus-go/ subtree (vendored copy
+# of upstream github.com/enbility/eebus-go, MIT) and the Go module cache
+# (eebusd/vendor/) are THIRD-PARTY code. They are excluded from every check
+# that enforces our house style (gofmt, SPDX, yamllint, shellcheck).
 
 name: Lint
 
@@ -47,10 +53,21 @@ jobs:
         working-directory: eebus_bridge/${{ matrix.component }}
         run: go mod download
 
+      # gofmt only on OUR Go files. The eebusd module ships a vendor/ tree
+      # whose files are frozen upstream and are NOT subject to our formatting
+      # policy. Scanning them would surface dozens of false positives and
+      # block CI for code we do not own.
       - name: gofmt
         working-directory: eebus_bridge/${{ matrix.component }}
         run: |
-          out="$(gofmt -l .)"
+          set -euo pipefail
+          # Build the list of our own .go files (excluding vendor/).
+          mapfile -t files < <(find . -type f -name '*.go' -not -path './vendor/*')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No Go files to format-check."
+            exit 0
+          fi
+          out="$(gofmt -l "${files[@]}")"
           if [ -n "${out}" ]; then
             echo "::error::gofmt found unformatted files:"
             echo "${out}"
@@ -76,28 +93,31 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          # Scope: ONLY our own files. Third-party code is out of scope for our
-          # license-header policy:
-          #   - eebus_bridge/eebus-go/   : upstream github.com/enbility/eebus-go (MIT)
-          #   - eebus_bridge/eebusd/vendor/ : Go module cache (mixed OSS licenses)
+          # Scope: ONLY our own files. Third-party code is out of scope for
+          # our license-header policy:
+          #   - eebus_bridge/eebus-go/    : upstream github.com/enbility/eebus-go (MIT)
+          #   - eebus_bridge/eebusd/vendor/: Go module cache (mixed OSS licenses)
+          # We list candidates into a file, then iterate. Using a temp file
+          # avoids any process-substitution edge case and makes the offending
+          # path print unambiguously when a header is missing.
+          tmp="$(mktemp)"
+          find eebus_bridge -type f \( -name '*.go' -o -name '*.sh' -o -name '*.py' \) \
+                             -not -path 'eebus_bridge/eebus-go/*' \
+                             -not -path '*/vendor/*' > "${tmp}"
+          find . -type f -name '*.yaml' \
+                 -not -path './.git/*' \
+                 -not -path './eebus_bridge/eebus-go/*' \
+                 -not -path '*/vendor/*' >> "${tmp}"
+          echo "Scoped files: $(wc -l < "${tmp}")"
           while IFS= read -r f; do
-            if ! grep -q "SPDX-License-Identifier: Apache-2.0" "$f"; then
-              echo "::error file=${f}::missing SPDX-License-Identifier header"
+            [ -z "${f}" ] && continue
+            if ! grep -q "SPDX-License-Identifier: Apache-2.0" "${f}"; then
+              echo "ERROR: missing SPDX-License-Identifier in: ${f}"
               missing=1
             fi
-          done < <(find eebus_bridge -type f \( -name '*.go' -o -name '*.sh' -o -name '*.py' \) \
-                       -not -path 'eebus_bridge/eebus-go/*' \
-                       -not -path '*/vendor/*')
-          while IFS= read -r f; do
-            if ! grep -q "SPDX-License-Identifier: Apache-2.0" "$f"; then
-              echo "::error file=${f}::missing SPDX-License-Identifier header"
-              missing=1
-            fi
-          done < <(find . -type f -name '*.yaml' \
-                       -not -path './.git/*' \
-                       -not -path './eebus_bridge/eebus-go/*' \
-                       -not -path '*/vendor/*')
-          exit $missing
+          done < "${tmp}"
+          rm -f "${tmp}"
+          exit "${missing}"
 
   shellcheck:
     name: shellcheck
@@ -106,11 +126,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # shellcheck ONLY our scripts. The vendored x/sys/unix package ships
+      # shell scripts (mkall.sh, mkerrors.sh) that are not ours and emit
+      # many warnings. We explicitly enumerate our own script paths.
       - name: Run shellcheck
         uses: ludeeus/action-shellcheck@master
         with:
           severity: warning
-          additional_paths: eebus_bridge/run.sh
+          additional_paths: >
+            eebus_bridge/rootfs/etc/services.d/eebus_bridge/run
 
   yamllint:
     name: yamllint
