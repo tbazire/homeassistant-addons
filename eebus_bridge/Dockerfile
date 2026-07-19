@@ -9,17 +9,20 @@
 #   2. bridge-builder   : builds the static eebus-bridge binary.
 #   3. runtime          : HA base image (s6-overlay v3), non-root, minimal.
 #
-# Both Go binaries are built with CGO_ENABLED=0 so they are fully static and
-# work on musl-based Alpine images. The runtime stage only needs to copy them
-# in plus the s6 service script.
+# Builders use the official golang image (pinned to 1.24, alpine-based) instead
+# of `apk add go` on the HA base. Reason: the Go version shipped by Alpine 3.21
+# community (1.23.5) is older than the `go 1.24.1` directive in go.mod, which
+# would fail the build. The golang image is kept current upstream and tracks
+# Go patch releases. The produced binaries are fully static (CGO_ENABLED=0)
+# and run on any Linux — including the musl-based HA runtime base.
+#
+# The HA base image (BUILD_FROM, per-arch) is used ONLY for the runtime stage,
+# where s6-overlay + bashio are required.
 
-ARG BUILD_FROM
-# hadolint ignore=DL3006
-FROM ${BUILD_FROM} AS eebusd-builder
-
-# Install Go in the builder stage. The HA base images are Alpine; use apk.
-# We pin Go 1.24 to match go.mod.
-RUN apk add --no-cache go=1.24.*
+# ---- Stage 1: eebusd builder ------------------------------------------------
+# We use golang:1.24-alpine (official, multi-arch via QEMU on the CI runner).
+# hadolint ignore=DL3007
+FROM golang:1.24-alpine AS eebusd-builder
 
 WORKDIR /src/eebusd
 # Copy the vendored module first so dependency changes are a separate layer.
@@ -28,20 +31,20 @@ COPY eebusd/vendor/ ./vendor/
 COPY eebusd/cmd/ ./cmd/
 COPY eebusd/internal/ ./internal/
 
+# CGO disabled => fully static binary, musl-compatible, runs on HA alpine base.
+# GOFLAGS=-mod=vendor forces offline build (no module proxy call).
 RUN CGO_ENABLED=0 GOOS=linux GOFLAGS=-mod=vendor \
     go build -trimpath -ldflags="-s -w" \
     -o /out/eebusd ./cmd/scanner
 
 
-# hadolint ignore=DL3006
-FROM ${BUILD_FROM} AS bridge-builder
-
-RUN apk add --no-cache go=1.24.*
+# ---- Stage 2: eebus-bridge builder ------------------------------------------
+# hadolint ignore=DL3007
+FROM golang:1.24-alpine AS bridge-builder
 
 WORKDIR /src/bridge
 COPY bridge/go.mod bridge/go.sum ./
-# bridge/ has no vendor/ — deps are fetched from the module proxy at build.
-# If the build environment is offline, vendor the bridge too.
+# bridge/ has no vendor/ — deps are fetched from the Go module proxy at build.
 COPY bridge/cmd/ ./cmd/
 COPY bridge/internal/ ./internal/
 
@@ -52,7 +55,10 @@ RUN CGO_ENABLED=0 GOOS=linux \
     -o /out/eebus-bridge ./cmd/bridge
 
 
-# ---- Runtime stage ----------------------------------------------------------
+# ---- Stage 3: runtime (HA add-on base) --------------------------------------
+# BUILD_FROM is injected by the CI workflow / HA builder, per architecture.
+# It resolves to ghcr.io/home-assistant/<arch>-base:3.21 (Alpine 3.21 + s6 v3).
+ARG BUILD_FROM
 # hadolint ignore=DL3006
 FROM ${BUILD_FROM}
 
