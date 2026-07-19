@@ -76,20 +76,27 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          # Every source file must reference the SPDX license identifier.
+          # Scope: ONLY our own files. Third-party code is out of scope for our
+          # license-header policy:
+          #   - eebus_bridge/eebus-go/   : upstream github.com/enbility/eebus-go (MIT)
+          #   - eebus_bridge/eebusd/vendor/ : Go module cache (mixed OSS licenses)
           while IFS= read -r f; do
             if ! grep -q "SPDX-License-Identifier: Apache-2.0" "$f"; then
               echo "::error file=${f}::missing SPDX-License-Identifier header"
               missing=1
             fi
-          done < <(find eebus_bridge -type f \( -name '*.go' -o -name '*.sh' -o -name '*.py' \))
-          # YAML files at the root and under .github/ + eebus_bridge/
+          done < <(find eebus_bridge -type f \( -name '*.go' -o -name '*.sh' -o -name '*.py' \) \
+                       -not -path 'eebus_bridge/eebus-go/*' \
+                       -not -path '*/vendor/*')
           while IFS= read -r f; do
             if ! grep -q "SPDX-License-Identifier: Apache-2.0" "$f"; then
               echo "::error file=${f}::missing SPDX-License-Identifier header"
               missing=1
             fi
-          done < <(find . -type f -name '*.yaml' -not -path './.git/*')
+          done < <(find . -type f -name '*.yaml' \
+                       -not -path './.git/*' \
+                       -not -path './eebus_bridge/eebus-go/*' \
+                       -not -path '*/vendor/*')
           exit $missing
 
   shellcheck:
@@ -112,11 +119,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install yamllint
+        run: pip install --user yamllint
+
+      # Scope: only YAML files we own. The vendored eebus-go/ subtree AND any
+      # vendored Go dependencies (vendor/) are third-party: their YAML configs
+      # (.golangci.yml, .mockery.yaml, CI workflows) do not follow our house
+      # style and must not be linted.
       - name: Run yamllint
-        uses: ibiqlik/action-yamllint@v3
-        with:
-          config_file: .yamllint.yaml
-          file_or_dir: .
+        run: |
+          set -euo pipefail
+          # Build the list of YAML files to lint, excluding third-party subtrees.
+          mapfile -t files < <(find . -type f -name '*.yaml' \
+                                    -not -path './.git/*' \
+                                    -not -path './eebus_bridge/eebus-go/*' \
+                                    -not -path '*/vendor/*' \
+                                    | sort)
+          echo "Linting ${#files[@]} YAML file(s):"
+          printf '  %s\n' "${files[@]}"
+          # No --strict: yamllint exits non-zero only on [error]-level findings.
+          # [warning]-level (e.g. document-start "---" missing) is printed but
+          # does NOT fail the job. This matches .yamllint.yaml where line-length
+          # is explicitly downgraded to warning.
+          yamllint -f parsable -c .yamllint.yaml "${files[@]}"
 
   addon-config:
     name: Add-on config validation

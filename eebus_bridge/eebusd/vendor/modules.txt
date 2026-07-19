@@ -1,0 +1,101 @@
+# github.com/enbility/eebus-go v0.0.0-00010101000000-000000000000 => ../eebus-go
+## explicit; go 1.24.1
+github.com/enbility/eebus-go/api
+github.com/enbility/eebus-go/features/client
+github.com/enbility/eebus-go/features/internal
+github.com/enbility/eebus-go/features/server
+github.com/enbility/eebus-go/service
+github.com/enbility/eebus-go/usecases/api
+github.com/enbility/eebus-go/usecases/cem/vabd
+github.com/enbility/eebus-go/usecases/cem/vapd
+github.com/enbility/eebus-go/usecases/internal
+github.com/enbility/eebus-go/usecases/ma/mgcp
+github.com/enbility/eebus-go/usecases/ma/mpc
+github.com/enbility/eebus-go/usecases/usecase
+# github.com/enbility/go-avahi v0.0.0-20240909195612-d5de6b280d7a
+## explicit; go 1.17
+github.com/enbility/go-avahi
+# github.com/enbility/ship-go v0.6.1-0.20260518113001-134687068e3c
+## explicit; go 1.24.0
+github.com/enbility/ship-go/api
+github.com/enbility/ship-go/cert
+github.com/enbility/ship-go/hub
+github.com/enbility/ship-go/logging
+github.com/enbility/ship-go/mdns
+github.com/enbility/ship-go/model
+github.com/enbility/ship-go/pairing
+github.com/enbility/ship-go/ship
+github.com/enbility/ship-go/util
+github.com/enbility/ship-go/ws
+# github.com/enbility/spine-go v0.7.1-0.20260520153416-0104ce40c885
+## explicit; go 1.24.1
+github.com/enbility/spine-go/api
+github.com/enbility/spine-go/model
+github.com/enbility/spine-go/spine
+github.com/enbility/spine-go/util
+# github.com/enbility/zeroconf/v2 v2.0.0-20240920094356-be1cae74fda6
+## explicit; go 1.22.0
+github.com/enbility/zeroconf/v2
+# github.com/godbus/dbus/v5 v5.2.2
+## explicit; go 1.20
+github.com/godbus/dbus/v5
+# github.com/golanguzb70/lrucache v1.2.0
+## explicit; go 1.20
+github.com/golanguzb70/lrucache
+# github.com/gorilla/websocket v1.5.3
+## explicit; go 1.12
+github.com/gorilla/websocket
+# github.com/govalues/decimal v0.1.36
+## explicit; go 1.22
+github.com/govalues/decimal
+# github.com/miekg/dns v1.1.72
+## explicit; go 1.24.0
+github.com/miekg/dns
+# github.com/rickb777/period v1.0.22
+## explicit; go 1.24.1
+github.com/rickb777/period
+# github.com/rickb777/plural v1.4.7
+## explicit; go 1.23.0
+github.com/rickb777/plural
+# gitlab.com/c0b/go-ordered-json v0.0.0-20201030195603-febf46534d5a
+## explicit
+gitlab.com/c0b/go-ordered-json
+# golang.org/x/mod v0.33.0
+## explicit; go 1.24.0
+golang.org/x/mod/semver
+# golang.org/x/net v0.50.0
+## explicit; go 1.24.0
+golang.org/x/net/bpf
+golang.org/x/net/internal/iana
+golang.org/x/net/internal/socket
+golang.org/x/net/ipv4
+golang.org/x/net/ipv6
+# golang.org/x/sync v0.19.0
+## explicit; go 1.24.0
+golang.org/x/sync/errgroup
+# golang.org/x/sys v0.41.0
+## explicit; go 1.24.0
+golang.org/x/sys/unix
+golang.org/x/sys/windows
+# golang.org/x/tools v0.42.0
+## explicit; go 1.24.0
+golang.org/x/tools/go/ast/edge
+golang.org/x/tools/go/ast/inspector
+golang.org/x/tools/go/gcexportdata
+golang.org/x/tools/go/packages
+golang.org/x/tools/go/types/objectpath
+golang.org/x/tools/go/types/typeutil
+golang.org/x/tools/internal/aliases
+golang.org/x/tools/internal/event
+golang.org/x/tools/internal/event/core
+golang.org/x/tools/internal/event/keys
+golang.org/x/tools/internal/event/label
+golang.org/x/tools/internal/gcimporter
+golang.org/x/tools/internal/gocommand
+golang.org/x/tools/internal/packagesinternal
+golang.org/x/tools/internal/pkgbits
+golang.org/x/tools/internal/stdlib
+golang.org/x/tools/internal/typeparams
+golang.org/x/tools/internal/typesinternal
+golang.org/x/tools/internal/versions
+# github.com/enbility/eebus-go => ../eebus-go

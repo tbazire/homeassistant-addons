@@ -36,16 +36,20 @@ eebus_bridge/eebusd/certs/
 options.json
 
 # ---- Go build artifacts -----------------------------------------------------
+# IMPORTANT: these patterns are anchored to the repository root (/). A bare
+# `eebusd` or `bridge` would also match the SOURCE DIRECTORIES
+# `eebus_bridge/eebusd/` and `eebus_bridge/bridge/`, silently excluding the
+# add-on's own Go code from git. Always keep the leading slash here.
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
-eebusd
-eebus-bridge
-eebus-scanner
-scanner
-bridge
+/eebusd
+/eebus-bridge
+/eebus-scanner
+/scanner
+/bridge
 *.test
 *.out
 bin/

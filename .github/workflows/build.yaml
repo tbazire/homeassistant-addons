@@ -85,13 +85,17 @@ jobs:
           fi
           # BUILD_FROM: HA base image per arch. The Go builder uses the plain
           # base image (alpine, with Go available via apk); the runtime stage
-          # uses the same base. Bumping the Alpine suffix must be tested.
+          # uses the same base.
+          # Tagging convention: `*-base:<alpine>` (NOT `*-base:<python>-alpine<x>`,
+          # those tags only exist on the `-base-python` images and only for older
+          # Alpine versions). `3.21` is the latest stable base, available on all
+          # 5 arches. Verified via the ghcr.io v2 tags/list API.
           case "${ARCH}" in
-            aarch64) base="ghcr.io/home-assistant/aarch64-base:3.12-alpine3.21" ;;
-            amd64)   base="ghcr.io/home-assistant/amd64-base:3.12-alpine3.21"   ;;
-            armhf)   base="ghcr.io/home-assistant/armhf-base:3.12-alpine3.21"   ;;
-            armv7)   base="ghcr.io/home-assistant/armv7-base:3.12-alpine3.21"   ;;
-            i386)    base="ghcr.io/home-assistant/i386-base:3.12-alpine3.21"    ;;
+            aarch64) base="ghcr.io/home-assistant/aarch64-base:3.21" ;;
+            amd64)   base="ghcr.io/home-assistant/amd64-base:3.21"   ;;
+            armhf)   base="ghcr.io/home-assistant/armhf-base:3.21"   ;;
+            armv7)   base="ghcr.io/home-assistant/armv7-base:3.21"   ;;
+            i386)    base="ghcr.io/home-assistant/i386-base:3.21"    ;;
             *) echo "::error::Unsupported architecture: ${ARCH}" && exit 1 ;;
           esac
           echo "version=${version}"  >> "$GITHUB_OUTPUT"

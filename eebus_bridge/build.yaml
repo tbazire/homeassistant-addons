@@ -9,11 +9,11 @@
 #   https://github.com/home-assistant/builder
 
 build_from:
-  aarch64: ghcr.io/home-assistant/aarch64-base:3.12-alpine3.21
-  amd64: ghcr.io/home-assistant/amd64-base:3.12-alpine3.21
-  armhf: ghcr.io/home-assistant/armhf-base:3.12-alpine3.21
-  armv7: ghcr.io/home-assistant/armv7-base:3.12-alpine3.21
-  i386: ghcr.io/home-assistant/i386-base:3.12-alpine3.21
+  aarch64: ghcr.io/home-assistant/aarch64-base:3.21
+  amd64: ghcr.io/home-assistant/amd64-base:3.21
+  armhf: ghcr.io/home-assistant/armhf-base:3.21
+  armv7: ghcr.io/home-assistant/armv7-base:3.21
+  i386: ghcr.io/home-assistant/i386-base:3.21
 
 # Labels are applied to the OCI image. The license label is part of the
 # Apache-2.0 compliance posture.
