@@ -121,7 +121,7 @@ jobs:
       # which makes the base image resolution fail for ARM.
       - name: Build image (${{ matrix.arch }})
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ github.workspace }}/eebus_bridge
           file: ${{ github.workspace }}/eebus_bridge/Dockerfile
