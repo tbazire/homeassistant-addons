@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Bazire
+#
+# yamllint configuration. Relaxed on line length (HA config files are often
+# wide), strict on indentation and trailing spaces.
+
+extends: default
+
+rules:
+  document-start:
+    present: true
+  indentation:
+    spaces: 2
+    indent-sequences: true
+    check-multi-line-strings: false
+  line-length:
+    max: 160
+    level: warning
+  trailing-spaces: disable  # HA translations contain intentional trailing spaces
+  comments:
+    require-starting-space: false
+  comments-indentation: disable
+  truthy:
+    check-keys: false       # HA uses On/Off/yes/no in many places

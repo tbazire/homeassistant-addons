@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Bazire
+#
+# Home Assistant UI labels for the add-on options.
+# Keys mirror the option names in config.yaml. HA renders these in the
+# add-on configuration screen.
+
+configuration:
+  log_level:
+    name: Log level
+    description: Verbosity of the add-on logs. Use "debug" only when investigating issues.
+  poll_interval:
+    name: Poll interval (seconds)
+    description: >-
+      How often eebusd proactively re-reads each entity. Leave at 60 for normal
+      use. Lower values increase network traffic.
+  pairing:
+    name: Pairing
+    description: Options controlling the SHIP pairing with the EEBUS device.
+  pairing.auto_accept:
+    name: Auto-accept pairing requests
+    description: >-
+      Automatically trust any incoming pairing request. Convenient but insecure
+      — only enable on a trusted network during first pairing.
+  pairing.remote_ski:
+    name: Remote SKI
+    description: >-
+      40-hex-char SKI of the device to pair with. Leave empty to rely on
+      auto-discovery.
+  pairing.secret:
+    name: SHIP pairing secret
+    description: >-
+      Optional SHIP pairing secret (hex). Enables listener pairing mode.
+  eebusd:
+    name: EEBUS daemon identity
+    description: How the add-on announces itself on the network.
+  eebusd.brand:
+    name: Brand
+    description: mDNS brand name announced by the add-on.
+  eebusd.model:
+    name: Model
+    description: mDNS model name announced by the add-on.
+  eebusd.serial:
+    name: Serial
+    description: Serial number announced by the add-on. Must be unique on the network.
+  eebusd.vendor:
+    name: Vendor code
+    description: EEBUS vendor code (3+ characters).
+  eebusd.port:
+    name: SHIP websocket port
+    description: Local TCP port for inbound SHIP connections. Default 4711.
+  mqtt:
+    name: MQTT
+    description: MQTT topics used to publish sensors. Broker is auto-discovered from Home Assistant.
+  mqtt.prefix:
+    name: State topic prefix
+    description: MQTT prefix for state topics (e.g. "eebus").
+  mqtt.discovery_prefix:
+    name: Discovery prefix
+    description: Home Assistant MQTT discovery prefix. Usually "homeassistant".

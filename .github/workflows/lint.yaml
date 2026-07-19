@@ -1,0 +1,138 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Bazire
+#
+# Lint & validation workflow. Runs on every PR and on pushes to main.
+# Fast feedback loop: does not build the Docker image (that's build.yaml).
+#
+# Checks performed:
+#   - Go: gofmt + go vet + go test on eebusd AND eebus-bridge.
+#   - Shell: shellcheck on run.sh.
+#   - YAML: yamllint on config/translations/workflows.
+#   - Add-on schema: python tests/test_config_validation.py asserts the
+#     security posture of config.yaml (no privileged, init:false, etc.).
+
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go vet & test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+          - eebusd
+          - bridge
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: |
+            eebus_bridge/${{ matrix.component }}/go.sum
+
+      - name: Download modules
+        working-directory: eebus_bridge/${{ matrix.component }}
+        run: go mod download
+
+      - name: gofmt
+        working-directory: eebus_bridge/${{ matrix.component }}
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "${out}" ]; then
+            echo "::error::gofmt found unformatted files:"
+            echo "${out}"
+            exit 1
+          fi
+
+      - name: go vet
+        working-directory: eebus_bridge/${{ matrix.component }}
+        run: go vet ./...
+
+      - name: go test
+        working-directory: eebus_bridge/${{ matrix.component }}
+        run: go test -race ./...
+
+  license-headers:
+    name: SPDX license headers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check SPDX headers on source files
+        run: |
+          set -euo pipefail
+          missing=0
+          # Every source file must reference the SPDX license identifier.
+          while IFS= read -r f; do
+            if ! grep -q "SPDX-License-Identifier: Apache-2.0" "$f"; then
+              echo "::error file=${f}::missing SPDX-License-Identifier header"
+              missing=1
+            fi
+          done < <(find eebus_bridge -type f \( -name '*.go' -o -name '*.sh' -o -name '*.py' \))
+          # YAML files at the root and under .github/ + eebus_bridge/
+          while IFS= read -r f; do
+            if ! grep -q "SPDX-License-Identifier: Apache-2.0" "$f"; then
+              echo "::error file=${f}::missing SPDX-License-Identifier header"
+              missing=1
+            fi
+          done < <(find . -type f -name '*.yaml' -not -path './.git/*')
+          exit $missing
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run shellcheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          severity: warning
+          additional_paths: eebus_bridge/run.sh
+
+  yamllint:
+    name: yamllint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run yamllint
+        uses: ibiqlik/action-yamllint@v3
+        with:
+          config_file: .yamllint.yaml
+          file_or_dir: .
+
+  addon-config:
+    name: Add-on config validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Run config validation tests
+        working-directory: eebus_bridge/tests
+        run: python test_config_validation.py

@@ -1,0 +1,218 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Bazire
+#
+# Workflow: multi-arch build of the eebus_bridge add-on + GHCR publish.
+#
+# Design:
+#   - `build` job is a 5-arch matrix (aarch64, amd64, armhf, armv7, i386).
+#   - QEMU is installed so AMD64 runners can cross-build ARM arches.
+#   - We call `docker/build-push-action` directly with an explicit `platforms:`
+#     per arch. The HA composite `home-assistant/builder` does NOT set
+#     `platforms:`, which breaks ARM cross-builds.
+#   - Cosign keyless-signs every pushed image (tag v* only).
+#   - A `manifest` job assembles a single multi-arch manifest and signs it.
+#
+# Behavior:
+#   - push/PR on main : build the 5 arches, no push.
+#   - tag v*          : build + push per-arch images, then assemble and sign a
+#                       multi-arch manifest ghcr.io/tbazire/eebus-bridge:<ver>.
+#
+# References:
+#   - https://github.com/home-assistant/builder
+#   - https://developers.home-assistant.io/docs/add-ons/publishing/
+
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+# id-token: write -> Cosign keyless (OIDC).
+# packages: write  -> push to ghcr.io via GITHUB_TOKEN.
+# contents: read   -> checkout.
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+env:
+  # Short image name (no arch, no tag). The `build` job produces
+  # ghcr.io/<owner>/<arch>-<IMAGE_NAME>:<version>, the `manifest` job
+  # assembles ghcr.io/<owner>/<IMAGE_NAME>:<version>.
+  IMAGE_NAME: eebus-bridge
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # arch      = HA name (config.yaml, io.hass.arch label)
+        # platform  = buildx notation (linux/<goarch>[/<variant>])
+        include:
+          - arch: aarch64
+            platform: linux/arm64
+          - arch: amd64
+            platform: linux/amd64
+          - arch: armhf
+            platform: linux/arm/v6
+          - arch: armv7
+            platform: linux/arm/v7
+          - arch: i386
+            platform: linux/386
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve metadata (version, push, base image)
+        id: meta
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          # Version = tag without the 'v' (e.g. v0.1.0 -> 0.1.0). On a non-tagged
+          # branch, use 'dev' (validation build, no push).
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            push="true"
+          else
+            version="dev"
+            push="false"
+          fi
+          # BUILD_FROM: HA base image per arch. The Go builder uses the plain
+          # base image (alpine, with Go available via apk); the runtime stage
+          # uses the same base. Bumping the Alpine suffix must be tested.
+          case "${ARCH}" in
+            aarch64) base="ghcr.io/home-assistant/aarch64-base:3.12-alpine3.21" ;;
+            amd64)   base="ghcr.io/home-assistant/amd64-base:3.12-alpine3.21"   ;;
+            armhf)   base="ghcr.io/home-assistant/armhf-base:3.12-alpine3.21"   ;;
+            armv7)   base="ghcr.io/home-assistant/armv7-base:3.12-alpine3.21"   ;;
+            i386)    base="ghcr.io/home-assistant/i386-base:3.12-alpine3.21"    ;;
+            *) echo "::error::Unsupported architecture: ${ARCH}" && exit 1 ;;
+          esac
+          echo "version=${version}"  >> "$GITHUB_OUTPUT"
+          echo "push=${push}"        >> "$GITHUB_OUTPUT"
+          echo "base_image=${base}"  >> "$GITHUB_OUTPUT"
+
+      # QEMU: required to cross-build ARM arches from an AMD64 runner. Without
+      # it, buildx cannot target linux/arm64|arm/v7|arm/v6.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GitHub Container Registry
+        if: steps.meta.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build (and push if tagged). BUILD_FROM is injected via build-args
+      # (the Dockerfile does FROM $BUILD_FROM). BUILD_ARCH/BUILD_VERSION feed
+      # the HA labels. `platforms:` is CRITICAL for cross-build: without it
+      # buildx ignores QEMU and falls back to the runner platform (amd64),
+      # which makes the base image resolution fail for ARM.
+      - name: Build image (${{ matrix.arch }})
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ github.workspace }}/eebus_bridge
+          file: ${{ github.workspace }}/eebus_bridge/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: ${{ steps.meta.outputs.push == 'true' }}
+          pull: true
+          build-args: |
+            BUILD_FROM=${{ steps.meta.outputs.base_image }}
+            BUILD_ARCH=${{ matrix.arch }}
+            BUILD_VERSION=${{ steps.meta.outputs.version }}
+          labels: |
+            io.hass.name=EEBUS Bridge
+            io.hass.description=Generic EEBUS bridge for Home Assistant
+            io.hass.version=${{ steps.meta.outputs.version }}
+            io.hass.type=addon
+            io.hass.arch=${{ matrix.arch }}
+            org.opencontainers.image.title=EEBUS Bridge
+            org.opencontainers.image.description=Generic EEBUS bridge for Home Assistant
+            org.opencontainers.image.source=https://github.com/tbazire/homeassistant-addons
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.arch }}-${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Cosign keyless: sign the pushed image (tag v* only). The digest comes
+      # from build-push-action output.
+      - name: Install Cosign
+        if: steps.meta.outputs.push == 'true'
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image (${{ matrix.arch }})
+        if: steps.meta.outputs.push == 'true'
+        env:
+          IMAGE_REF: ghcr.io/${{ github.repository_owner }}/${{ matrix.arch }}-${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: |
+          echo "Signing: ${IMAGE_REF}"
+          cosign sign --yes "${IMAGE_REF}"
+
+  manifest:
+    name: Publish multi-arch manifest
+    needs: build
+    runs-on: ubuntu-latest
+    # The manifest only makes sense on a release (tag v*) AND only if all
+    # per-arch builds succeeded (otherwise imagetools create would fail on a
+    # missing source image).
+    if: startsWith(github.ref, 'refs/tags/v') && !cancelled() && success()
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: meta
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Create and sign multi-arch manifest
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        run: |
+          set -euo pipefail
+          REGISTRY_PREFIX="ghcr.io/${OWNER}"
+          # Sources: the 5 per-arch images already published by the `build` job.
+          SOURCE_IMAGES=(
+            "${REGISTRY_PREFIX}/aarch64-${IMAGE_NAME}:${VERSION}"
+            "${REGISTRY_PREFIX}/amd64-${IMAGE_NAME}:${VERSION}"
+            "${REGISTRY_PREFIX}/armhf-${IMAGE_NAME}:${VERSION}"
+            "${REGISTRY_PREFIX}/armv7-${IMAGE_NAME}:${VERSION}"
+            "${REGISTRY_PREFIX}/i386-${IMAGE_NAME}:${VERSION}"
+          )
+          METADATA_FILE="$(mktemp)"
+          docker buildx imagetools create \
+            --metadata-file "${METADATA_FILE}" \
+            -t "${REGISTRY_PREFIX}/${IMAGE_NAME}:${VERSION}" \
+            "${SOURCE_IMAGES[@]}"
+          DIGEST="$(jq -r '.["containerimage.descriptor"].digest' "${METADATA_FILE}")"
+          echo "Manifest published: ${REGISTRY_PREFIX}/${IMAGE_NAME}:${VERSION} (@${DIGEST})"
+          cosign sign --yes "${REGISTRY_PREFIX}/${IMAGE_NAME}@${DIGEST}"

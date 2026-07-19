@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Bazire
+#
+# Home Assistant add-on manifest for EEBUS Bridge.
+#
+# Security posture:
+#   - host_network: true  REQUIRED. EEBUS uses mDNS multicast (UDP 5353) and
+#     expects the inbound SHIP TCP connection to come from the LAN. Anything
+#     less than host networking breaks pairing on most EEBUS gateways.
+#   - No privileged, full_access, host_pid, host_dbus, host_ipc, docker_api,
+#     map, usb, gpio or uart. Absence is asserted by tests/test_config_validation.py.
+#   - init: false is MANDATORY with s6-overlay v3 base images.
+#
+# Schema vocabulary reference:
+#   https://developers.home-assistant.io/docs/add-ons/configuration
+
+name: EEBUS Bridge
+version: "0.1.0"
+slug: eebus_bridge
+description: >-
+  Generic EEBUS bridge. Pairs with any EEBUS device on the local network
+  (heat pumps, wallboxes, inverters, …) and exposes its measurements as
+  Home Assistant sensors via MQTT discovery.
+url: https://github.com/tbazire/homeassistant-addons/tree/main/eebus_bridge
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+init: false
+startup: services
+boot: auto
+timeout: 30
+host_network: true
+apparmor: false
+services:
+  - mqtt:want
+options:
+  log_level: "info"
+  poll_interval: "60"
+  pairing:
+    auto_accept: false
+    remote_ski: ""
+    secret: ""
+  eebusd:
+    brand: "EEBusBridge"
+    model: "Bridge-1"
+    serial: "bridge-0001"
+    vendor: "EBRG"
+    port: 4711
+  mqtt:
+    prefix: "eebus"
+    discovery_prefix: "homeassistant"
+schema:
+  log_level: list(trace|debug|info|warning|error)
+  poll_interval: int(1,86400)?
+  pairing:
+    auto_accept: bool
+    remote_ski: match([0-9a-fA-F]{40})?
+    secret: password?
+  eebusd:
+    brand: str
+    model: str
+    serial: str
+    vendor: str
+    port: port
+  mqtt:
+    prefix: match(^[A-Za-z0-9_\-/]+$)
+    discovery_prefix: str

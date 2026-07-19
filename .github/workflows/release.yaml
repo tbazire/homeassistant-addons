@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Bazire
+#
+# Release workflow. Triggered by a tag v* on main. Builds the GitHub Release
+# notes from CHANGELOG.md and attaches them to the release.
+#
+# The Docker image itself is built and published by build.yaml; this workflow
+# only manages the GitHub Release object.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for changelog extraction
+
+      - name: Resolve version
+        id: meta
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${version}"
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        shell: bash
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Extract the section of eebus_bridge/CHANGELOG.md matching this
+          # version. Falls back to the [Unreleased] section if no match.
+          CHANGELOG="eebus_bridge/CHANGELOG.md"
+          if [ ! -f "${CHANGELOG}" ]; then
+            echo "::error::missing ${CHANGELOG}"
+            exit 1
+          fi
+          NOTES="$(awk -v v="${VERSION}" '
+            /^## / { in_section = ($0 ~ v) }
+            in_section { print }
+          ' "${CHANGELOG}")"
+          if [ -z "${NOTES}" ]; then
+            NOTES="(No changelog entry found for ${VERSION}.)"
+          fi
+          {
+            echo "notes<<EOF"
+            echo "${NOTES}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "eebus_bridge v${{ steps.meta.outputs.version }}"
+          body: ${{ steps.notes.outputs.notes }}
+          draft: false
+          prerelease: ${{ contains(steps.meta.outputs.version, '-') }}
+          generate_release_notes: false

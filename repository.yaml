@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Bazire
+#
+# Home Assistant add-on repository manifest.
+# This file MUST be named repository.yaml and sit at the repository root for
+# Home Assistant to recognize the repository as an add-on store.
+# https://developers.home-assistant.io/docs/add-ons/repository
+
+name: tbazire Home Assistant Add-ons
+url: https://github.com/tbazire/homeassistant-addons
+maintainer: Tommy Bazire

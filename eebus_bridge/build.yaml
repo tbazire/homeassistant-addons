@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Bazire
+#
+# Per-arch base images for the local HA builder (`home-assistant/builder`).
+# The CI workflow (.github/workflows/build.yaml) maintains an identical
+# mapping inline; keep the two in sync when bumping the base image version.
+#
+# Reference:
+#   https://github.com/home-assistant/builder
+
+build_from:
+  aarch64: ghcr.io/home-assistant/aarch64-base:3.12-alpine3.21
+  amd64: ghcr.io/home-assistant/amd64-base:3.12-alpine3.21
+  armhf: ghcr.io/home-assistant/armhf-base:3.12-alpine3.21
+  armv7: ghcr.io/home-assistant/armv7-base:3.12-alpine3.21
+  i386: ghcr.io/home-assistant/i386-base:3.12-alpine3.21
+
+# Labels are applied to the OCI image. The license label is part of the
+# Apache-2.0 compliance posture.
+labels:
+  io.hass.type: addon
+  org.opencontainers.image.title: "EEBUS Bridge"
+  org.opencontainers.image.description: "Generic EEBUS bridge for Home Assistant"
+  org.opencontainers.image.source: "https://github.com/tbazire/homeassistant-addons"
+  org.opencontainers.image.licenses: "Apache-2.0"

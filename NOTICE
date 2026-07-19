@@ -1,0 +1,46 @@
+EEBUS Bridge Home Assistant Add-on
+Copyright 2026 Tommy Bazire
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+================================================================================
+Third-party software attribution
+================================================================================
+
+This product includes or relies on the following third-party software. We thank
+their authors and contributors.
+
+Go modules (used by the `eebusd` daemon)
+-----------------------------------------
+  - github.com/enbility/eebus-go        ........ MIT License
+  - github.com/enbility/ship-go         ........ MIT License
+  - github.com/enbility/spine-go        ........ MIT License
+  - github.com/enbility/go-avahi        ........ MIT License
+  - github.com/enbility/zeroconf/v2     ........ MIT License
+  - github.com/godbus/dbus/v5           ........ BSD-2-Clause
+  - github.com/gorilla/websocket        ........ BSD-2-Clause
+  - github.com/miekg/dns                ........ BSD-3-Clause
+  - golang.org/x/*                      ........ BSD-3-Clause
+
+Go modules (used by the `eebus-bridge` MQTT/HA bridge)
+------------------------------------------------------
+  - github.com/eclipse/paho.mqtt.golang ........ EPL-2.0 / EDL-1.0
+
+Home Assistant base images
+--------------------------
+  - ghcr.io/home-assistant/<arch>-base   ...... MIT License
+    Copyright (c) Home Assistant
+
+Full license texts for each dependency are available in their respective
+source repositories, copies of which are retained in the Go module cache at
+build time.

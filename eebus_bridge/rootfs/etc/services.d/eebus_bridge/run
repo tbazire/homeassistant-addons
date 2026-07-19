@@ -1,0 +1,87 @@
+#!/usr/bin/with-contenv bashio
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Bazire
+#
+# s6 service entrypoint for the eebus_bridge add-on.
+#
+# Responsibilities:
+#   1. Read the HA options via bashio.
+#   2. Resolve the MQTT broker (Supervisor service first, user override next).
+#   3. Persist the SHIP cert dir (/data/eebus) and tighten its permissions.
+#   4. Export every option as an EEBUS_* env var, then exec eebus-bridge.
+#
+# Security: secrets (MQTT password, SHIP secret) are NEVER logged. They are
+# only passed as env vars to the bridge, whose logger redacts them.
+
+set -euo pipefail
+
+# bashio provides config / log / services helpers. On a non-HA dev shell the
+# script will fail fast with a clear error.
+
+main() {
+    bashio::log.info "eebus_bridge starting"
+
+    # 1. Persistent data dir for eebusd (cert + ring buffer). Must survive
+    #    restarts and be private (mode 0770, owned by root:eebus).
+    local data_dir="${EEBUS_DATA_DIR:-/data/eebus}"
+    mkdir -p "${data_dir}"
+    chmod 0770 "${data_dir}" 2>/dev/null || true
+
+    # 2. MQTT broker resolution. Supervisor service (Mosquitto add-on) wins by
+    #    default; the user can override with explicit mqtt.host.
+    local mqtt_host="" mqtt_port="1883" mqtt_user="" mqtt_pass=""
+    if bashio::config.has_value 'mqtt.host'; then
+        mqtt_host="$(bashio::config 'mqtt.host')"
+        mqtt_port="$(bashio::config 'mqtt.port')"
+        if bashio::config.has_value 'mqtt.user'; then
+            mqtt_user="$(bashio::config 'mqtt.user')"
+        fi
+        if bashio::config.has_value 'mqtt.password'; then
+            mqtt_pass="$(bashio::config 'mqtt.password')"
+        fi
+    elif bashio::services.available 'mqtt'; then
+        mqtt_host="$(bashio::services 'mqtt' 'host')"
+        mqtt_port="$(bashio::services 'mqtt' 'port')"
+        mqtt_user="$(bashio::services 'mqtt' 'username')"
+        mqtt_pass="$(bashio::services 'mqtt' 'password')"
+        bashio::log.info "MQTT broker auto-discovered from Supervisor"
+    else
+        bashio::exit.nok "No MQTT broker available. Install the Mosquitto broker add-on or set mqtt.host."
+    fi
+
+    # 3. Forward every option as an env var consumed by eebus-bridge/internal/config.go.
+    export EEBUS_SCANNER_BIN="${EEBUS_SCANNER_BIN:-/usr/local/bin/eebusd}"
+    export EEBUS_DATA_DIR="${data_dir}"
+    export EEBUS_LOG_LEVEL="$(bashio::config 'log_level')"
+    export EEBUS_POLL_INTERVAL="$(bashio::config 'poll_interval')"
+    export EEBUS_PAIRING_AUTO_ACCEPT="$(bashio::config 'pairing.auto_accept')"
+    if bashio::config.has_value 'pairing.remote_ski'; then
+        export EEBUS_PAIRING_REMOTE_SKI="$(bashio::config 'pairing.remote_ski')"
+    fi
+    if bashio::config.has_value 'pairing.secret'; then
+        # Secret is exported but NEVER logged (the bridge's logger redacts it).
+        export EEBUS_PAIRING_SECRET="$(bashio::config 'pairing.secret')"
+    fi
+    export EEBUS_SCANNER_BRAND="$(bashio::config 'eebusd.brand')"
+    export EEBUS_SCANNER_MODEL="$(bashio::config 'eebusd.model')"
+    export EEBUS_SCANNER_SERIAL="$(bashio::config 'eebusd.serial')"
+    export EEBUS_SCANNER_VENDOR="$(bashio::config 'eebusd.vendor')"
+    export EEBUS_SCANNER_PORT="$(bashio::config 'eebusd.port')"
+
+    export EEBUS_MQTT_HOST="${mqtt_host}"
+    export EEBUS_MQTT_PORT="${mqtt_port}"
+    if [ -n "${mqtt_user}" ]; then
+        export EEBUS_MQTT_USER="${mqtt_user}"
+    fi
+    if [ -n "${mqtt_pass}" ]; then
+        export EEBUS_MQTT_PASSWORD="${mqtt_pass}"
+    fi
+    export EEBUS_MQTT_PREFIX="$(bashio::config 'mqtt.prefix')"
+    export EEBUS_MQTT_DISCOVERY="$(bashio::config 'mqtt.discovery_prefix')"
+
+    # 4. Exec the bridge. s6-overlay now supervises it; SIGTERM propagates.
+    bashio::log.info "launching eebus-bridge (broker=${mqtt_host}:${mqtt_port})"
+    exec /usr/local/bin/eebus-bridge
+}
+
+main "$@"

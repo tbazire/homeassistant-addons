@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Bazire
+#
+# Git ignore rules for the eebus_bridge Home Assistant add-on repository.
+#
+# Philosophy: this repo is PUBLIC. Anything sensitive (keys, certs, passwords,
+# per-install state) MUST be ignored. Build artifacts are ignored to keep the
+# diff clean. The vendored Go dependencies (vendor/) are NOT ignored: they are
+# committed so the Docker build is fully offline/reproducible.
+
+# ---- Secrets & credentials (NEVER commit) -----------------------------------
+*.key
+*.pem
+*_key
+*.crt
+*.cer
+*.p12
+*.pfx
+secrets.*
+.env
+.env.*
+*.secret
+
+# ---- EEBUS runtime state (generated per-install) ----------------------------
+# eebusd persists its generated cert/key + ring buffer here. These are unique
+# per install and tie the add-on to its pairings — never commit them.
+certs/
+eebus_bridge/eebusd/certs/
+**/scanner.crt
+**/scanner.key
+**/ringbuffer.json
+/data/
+
+# ---- Home Assistant add-on local config ------------------------------------
+# When testing locally with the HA Supervisor, options land here.
+options.json
+
+# ---- Go build artifacts -----------------------------------------------------
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+eebusd
+eebus-bridge
+eebus-scanner
+scanner
+bridge
+*.test
+*.out
+bin/
+dist/
+
+# ---- Python (tests are Python) ---------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+
+# ---- Editor / OS ------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---- Logs -------------------------------------------------------------------
+*.log
+logs/
