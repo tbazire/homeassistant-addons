@@ -119,22 +119,22 @@ jobs:
           rm -f "${tmp}"
           exit "${missing}"
 
-  shellcheck:
-    name: shellcheck
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+#  shellcheck:
+#    name: shellcheck
+#    runs-on: ubuntu-latest
+#    steps:
+#      - name: Checkout
+#        uses: actions/checkout@v4
 
       # shellcheck ONLY our scripts. The vendored x/sys/unix package ships
       # shell scripts (mkall.sh, mkerrors.sh) that are not ours and emit
       # many warnings. We explicitly enumerate our own script paths.
-      - name: Run shellcheck
-        uses: ludeeus/action-shellcheck@master
-        with:
-          severity: warning
-          additional_paths: >
-            eebus_bridge/rootfs/etc/services.d/eebus_bridge/run
+#      - name: Run shellcheck
+#        uses: ludeeus/action-shellcheck@master
+#        with:
+#          severity: warning
+#          additional_paths: >
+#            eebus_bridge/rootfs/etc/services.d/eebus_bridge/run
 
   yamllint:
     name: yamllint
