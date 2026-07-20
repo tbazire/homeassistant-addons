@@ -72,9 +72,7 @@ ARG BUILD_VERSION
 # The /data mount is provided by HA and is chowned to root by the Supervisor;
 # we keep the runtime user non-root and grant it write access via the group.
 RUN addgroup -S eebus && adduser -S -G eebus -h /app eebus \
-    && mkdir -p /app /data/eebus \
-    && chown -R root:eebus /data/eebus \
-    && chmod 0770 /data/eebus
+    && mkdir -p /app
 
 # Copy the static binaries in.
 COPY --from=eebusd-builder /out/eebusd /usr/local/bin/eebusd
@@ -83,6 +81,7 @@ COPY --from=bridge-builder /out/eebus-bridge /usr/local/bin/eebus-bridge
 # s6-overlay service script: run.sh is what HA launches.
 COPY rootfs/ /
 RUN chmod +x /etc/services.d/eebus_bridge/run \
+    && chmod +x /etc/cont-init.d/01-permissions \
     && chmod +x /usr/local/bin/eebusd /usr/local/bin/eebus-bridge
 
 # OCI + HA labels.
@@ -93,9 +92,5 @@ LABEL io.hass.name="EEBUS Bridge" \
       org.opencontainers.image.description="Generic EEBUS bridge for Home Assistant" \
       org.opencontainers.image.source="https://github.com/tbazire/homeassistant-addons" \
       org.opencontainers.image.licenses="Apache-2.0"
-
-# Run as the non-root user. The base image's ENTRYPOINT [/init] (s6-overlay)
-# remains the PID 1 and supervises our service.
-USER eebus
 
 # No CMD/ENTRYPOINT: provided by the HA base image (s6-overlay v3 [/init]).
