@@ -28,6 +28,7 @@ arch:
   - armhf
   - armv7
   - i386
+image: "ghcr.io/tbazire/amd64-eebus-bridge"
 init: false
 startup: services
 boot: auto
