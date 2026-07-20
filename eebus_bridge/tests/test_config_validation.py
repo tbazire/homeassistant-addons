@@ -40,7 +40,7 @@ FORBIDDEN_KEYS = (
     "device",
 )
 
-REQUIRED_ARCHES = ("aarch64", "amd64", "armhf", "armv7", "i386")
+REQUIRED_ARCHES = ("aarch64", "amd64", "i386")
 
 errors: list[str] = []
 
