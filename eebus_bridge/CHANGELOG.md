@@ -6,10 +6,10 @@
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.1] - 2026-07-20
 
-### Added
-- Initial public release scaffolding (config.yaml, Dockerfile, run.sh, docs).
+### Fixed
+- Correciton de la syntaxe Dockerfile
 
 ## [0.1.0] - 2026-07-19
 
