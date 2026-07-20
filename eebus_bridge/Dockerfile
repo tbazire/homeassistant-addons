@@ -81,7 +81,6 @@ COPY --from=bridge-builder /out/eebus-bridge /usr/local/bin/eebus-bridge
 # s6-overlay service script: run.sh is what HA launches.
 COPY rootfs/ /
 RUN chmod +x /etc/services.d/eebus_bridge/run \
-    && chmod +x /etc/cont-init.d/01-permissions \
     && chmod +x /usr/local/bin/eebusd /usr/local/bin/eebus-bridge
 
 # OCI + HA labels.
