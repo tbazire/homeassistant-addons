@@ -103,10 +103,12 @@ jobs:
           tmp="$(mktemp)"
           find eebus_bridge -type f \( -name '*.go' -o -name '*.sh' -o -name '*.py' \) \
                              -not -path 'eebus_bridge/eebus-go/*' \
+                             -not -path 'eebus_bridge/eebusd/*' \
                              -not -path '*/vendor/*' > "${tmp}"
           find . -type f -name '*.yaml' \
                  -not -path './.git/*' \
                  -not -path './eebus_bridge/eebus-go/*' \
+                 -not -path 'eebus_bridge/eebusd/*' \
                  -not -path '*/vendor/*' >> "${tmp}"
           echo "Scoped files: $(wc -l < "${tmp}")"
           while IFS= read -r f; do
