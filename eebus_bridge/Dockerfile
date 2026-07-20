@@ -22,6 +22,9 @@
 # ---- Stage 1: eebusd builder ------------------------------------------------
 # We use golang:1.24-alpine (official, multi-arch via QEMU on the CI runner).
 # hadolint ignore=DL3007
+ARG BUILD_FROM
+ARG BUILD_ARCH
+ARG BUILD_VERSION
 FROM golang:1.24-alpine AS eebusd-builder
 
 WORKDIR /src/eebusd
@@ -58,9 +61,10 @@ RUN CGO_ENABLED=0 GOOS=linux \
 # ---- Stage 3: runtime (HA add-on base) --------------------------------------
 # BUILD_FROM is injected by the CI workflow / HA builder, per architecture.
 # It resolves to ghcr.io/home-assistant/<arch>-base:3.21 (Alpine 3.21 + s6 v3).
-ARG BUILD_FROM
 # hadolint ignore=DL3006
 FROM ${BUILD_FROM}
+ARG BUILD_FROM
+ARG BUILD_VERSION
 
 # Drop to a non-root user. HA add-ons normally run as root, but the add-on
 # needs no privileged capability (host_network is enough for EEBUS), so we
