@@ -4,7 +4,7 @@
 # Workflow: multi-arch build of the eebus_bridge add-on + GHCR publish.
 #
 # Design:
-#   - `build` job is a 5-arch matrix (aarch64, amd64, armhf, armv7, i386).
+#   - `build` job is a 5-arch matrix (aarch64, amd64, i386).
 #   - QEMU is installed so AMD64 runners can cross-build ARM arches.
 #   - We call `docker/build-push-action` directly with an explicit `platforms:`
 #     per arch. The HA composite `home-assistant/builder` does NOT set
@@ -58,10 +58,6 @@ jobs:
             platform: linux/arm64
           - arch: amd64
             platform: linux/amd64
-          - arch: armhf
-            platform: linux/arm/v6
-          - arch: armv7
-            platform: linux/arm/v7
           - arch: i386
             platform: linux/386
     steps:
@@ -93,8 +89,6 @@ jobs:
           case "${ARCH}" in
             aarch64) base="ghcr.io/home-assistant/aarch64-base:3.21" ;;
             amd64)   base="ghcr.io/home-assistant/amd64-base:3.21"   ;;
-            armhf)   base="ghcr.io/home-assistant/armhf-base:3.21"   ;;
-            armv7)   base="ghcr.io/home-assistant/armv7-base:3.21"   ;;
             i386)    base="ghcr.io/home-assistant/i386-base:3.21"    ;;
             *) echo "::error::Unsupported architecture: ${ARCH}" && exit 1 ;;
           esac
@@ -208,8 +202,6 @@ jobs:
           SOURCE_IMAGES=(
             "${REGISTRY_PREFIX}/aarch64-${IMAGE_NAME}:${VERSION}"
             "${REGISTRY_PREFIX}/amd64-${IMAGE_NAME}:${VERSION}"
-            "${REGISTRY_PREFIX}/armhf-${IMAGE_NAME}:${VERSION}"
-            "${REGISTRY_PREFIX}/armv7-${IMAGE_NAME}:${VERSION}"
             "${REGISTRY_PREFIX}/i386-${IMAGE_NAME}:${VERSION}"
           )
           METADATA_FILE="$(mktemp)"

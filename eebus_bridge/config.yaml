@@ -25,8 +25,6 @@ url: https://github.com/tbazire/homeassistant-addons/tree/main/eebus_bridge
 arch:
   - aarch64
   - amd64
-  - armhf
-  - armv7
   - i386
 image: "ghcr.io/tbazire/{arch}-eebus-bridge"
 init: false
@@ -58,7 +56,7 @@ schema:
   poll_interval: int(1,86400)?
   pairing:
     auto_accept: bool
-    remote_ski: 
+    remote_ski: str
     secret: password?
   eebusd:
     brand: str

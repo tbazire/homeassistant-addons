@@ -21,7 +21,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`device`, `manufacturer`, `configuration`, `measurement`, `diagnosis` kinds).
 - `eebus-bridge` (Go): consumes the NDJSON stream from `eebusd`, publishes
   Home Assistant MQTT discovery messages and sensor states.
-- Multi-arch Docker image (aarch64, amd64, armhf, armv7, i386), signed with
+- Multi-arch Docker image (aarch64, amd64, i386), signed with
   Cosign (keyless OIDC).
 - Configuration via Home Assistant options (no hardcoded secrets).
 - Non-root runtime, host networking (justified by mDNS + inbound SHIP),
