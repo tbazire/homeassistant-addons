@@ -427,7 +427,7 @@ func describeDescription(desc model.MeasurementDescriptionDataType) string {
 		parts = append(parts, fmt.Sprintf("scope=%s", *desc.ScopeType))
 	}
 	if desc.Unit != nil {
-		parts = append(parts, fmt.Sprintf("unit=%s", normalizeUnit(*desc.Unit)))
+                parts = append(parts, fmt.Sprintf("unit=%s", normalizeUnit(string(*desc.Unit))))
 	}
 	return strings.Join(parts, " ")
 }
