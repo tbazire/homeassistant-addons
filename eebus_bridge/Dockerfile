@@ -71,8 +71,9 @@ ARG BUILD_VERSION
 # create a dedicated unprivileged account.
 # The /data mount is provided by HA and is chowned to root by the Supervisor;
 # we keep the runtime user non-root and grant it write access via the group.
+# Note: /data/eebus is created with 0775 permissions so the eebus group can write.
 RUN addgroup -S eebus && adduser -S -G eebus -h /app eebus \
-    && mkdir -p /app
+    && mkdir -p /data/eebus && chmod 0775 /data/eebus
 
 # Copy the static binaries in.
 COPY --from=eebusd-builder /out/eebusd /usr/local/bin/eebusd
