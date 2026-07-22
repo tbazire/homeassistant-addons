@@ -16,7 +16,7 @@
 #   https://developers.home-assistant.io/docs/add-ons/configuration
 
 name: EEBUS Bridge
-version: "0.1.2"
+version: "0.1.2-dev"
 slug: eebus_bridge
 description: >-
   Generic EEBUS bridge. Pairs with any EEBUS device on the local network

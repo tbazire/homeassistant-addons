@@ -9,6 +9,8 @@ Per-add-on changes live in [`eebus_bridge/CHANGELOG.md`](./eebus_bridge/CHANGELO
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 for each add-on (tagged `v<add-on-version>`).
+## [0.1.2-dev]
+Passage en dev suite à de nombreux bug une fois porté sur HA
 
 ## [0.1.1]
 

@@ -5,6 +5,11 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [0.1.2-dev] - 2026-07-20
+
+Passage en dev suite à de nombreux bug
+### Fixed
+modification de la generation des fichier json
 
 ## [0.1.2] - 2026-07-20
 

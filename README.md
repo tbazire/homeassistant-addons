@@ -12,7 +12,7 @@ A collection of Home Assistant add-ons maintained by **Tommy Bazire**.
 
 | Add-on | Description | Status |
 |--------|-------------|--------|
-| [**EEBUS Bridge**](./eebus_bridge) | Generic EEBUS bridge. Pairs with any EEBUS device on the local network (heat pumps, wallboxes, inverters, …) and exposes its measurements as Home Assistant sensors via MQTT discovery. | v0.1.0 |
+| [**EEBUS Bridge**](./eebus_bridge) | Generic EEBUS bridge. Pairs with any EEBUS device on the local network (heat pumps, wallboxes, inverters, …) and exposes its measurements as Home Assistant sensors via MQTT discovery. | v0.1.2-dev |
 
 ## Installation
 
