@@ -242,7 +242,7 @@ func (s *Scanner) renderMeasurementsJSON(env envelope, m *client.Measurement) {
 			line.Scope = string(*desc.ScopeType)
 		}
 		if desc.Unit != nil {
-			line.Unit = string(*desc.Unit)
+			line.Unit = normalizeUnit(string(*desc.Unit))
 		}
 		if d.Value != nil {
 			line.Value = d.Value.GetValue()
@@ -427,7 +427,7 @@ func describeDescription(desc model.MeasurementDescriptionDataType) string {
 		parts = append(parts, fmt.Sprintf("scope=%s", *desc.ScopeType))
 	}
 	if desc.Unit != nil {
-		parts = append(parts, fmt.Sprintf("unit=%s", *desc.Unit))
+		parts = append(parts, fmt.Sprintf("unit=%s", normalizeUnit(*desc.Unit)))
 	}
 	return strings.Join(parts, " ")
 }

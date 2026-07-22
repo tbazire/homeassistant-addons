@@ -253,3 +253,29 @@ func ptrConfigStr(s string) *model.DeviceConfigurationKeyValueStringType {
 	v := model.DeviceConfigurationKeyValueStringType(s)
 	return &v
 }
+
+// ---- normalizeUnit tests ----------------------------------------------------
+
+func TestNormalizeUnit(t *testing.T) {
+	cases := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"degC to °C", "degC", "°C"},
+		{"DEGC uppercase", "DEGC", "°C"},
+		{"degF to °F", "degF", "°F"},
+		{"W unchanged", "W", "W"},
+		{"kW unchanged", "kW", "kW"},
+		{"empty string", "", ""},
+		{"unknown unit", "xyz", "xyz"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := normalizeUnit(c.got); got != c.want {
+				t.Errorf("normalizeUnit(%q) = %q, want %q", c.got, got, c.want)
+			}
+		})
+	}
+}
