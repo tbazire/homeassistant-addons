@@ -90,3 +90,51 @@ func TestParserSkipsMalformedLines(t *testing.T) {
 		}
 	}
 }
+
+func TestParserSkipsNullMeasurementValue(t *testing.T) {
+	in := strings.Join([]string{
+		`{"kind":"measurement","ski":"s","entity":"0","time":"t","id":"1","type":"Power","unit":"W","value":1}`,
+		`{"kind":"measurement","ski":"s","entity":"0","time":"t","id":"2","type":"Power","unit":"W","value":null}`,
+		`{"kind":"measurement","ski":"s","entity":"0","time":"t","id":"3","type":"Power","unit":"W","value":3}`,
+	}, "\n")
+	p := NewParser(strings.NewReader(in), fakeLogger{})
+
+	var got []Event
+	if err := p.Stream(func(ev Event) { got = append(got, ev) }); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	// Should skip the null value measurement
+	if len(got) != 2 {
+		t.Fatalf("expected 2 valid events (null value skipped), got %d", len(got))
+	}
+	if got[0].Measurement == nil || got[0].Measurement.Value != 1 {
+		t.Errorf("first event should be measurement with value=1, got %+v", got[0])
+	}
+	if got[1].Measurement == nil || got[1].Measurement.Value != 3 {
+		t.Errorf("second event should be measurement with value=3, got %+v", got[1])
+	}
+}
+
+func TestParserSkipsMissingMeasurementValue(t *testing.T) {
+	in := strings.Join([]string{
+		`{"kind":"measurement","ski":"s","entity":"0","time":"t","id":"1","type":"Power","unit":"W","value":1}`,
+		`{"kind":"measurement","ski":"s","entity":"0","time":"t","id":"2","type":"Power","unit":"W"}`,
+		`{"kind":"measurement","ski":"s","entity":"0","time":"t","id":"3","type":"Power","unit":"W","value":3}`,
+	}, "\n")
+	p := NewParser(strings.NewReader(in), fakeLogger{})
+
+	var got []Event
+	if err := p.Stream(func(ev Event) { got = append(got, ev) }); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	// Should skip the measurement with missing value field
+	if len(got) != 2 {
+		t.Fatalf("expected 2 valid events (missing value skipped), got %d", len(got))
+	}
+	if got[0].Measurement == nil || got[0].Measurement.Value != 1 {
+		t.Errorf("first event should be measurement with value=1, got %+v", got[0])
+	}
+	if got[1].Measurement == nil || got[1].Measurement.Value != 3 {
+		t.Errorf("second event should be measurement with value=3, got %+v", got[1])
+	}
+}

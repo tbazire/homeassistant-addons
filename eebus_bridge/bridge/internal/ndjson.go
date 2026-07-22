@@ -184,6 +184,19 @@ func (p *Parser) parseLine(line string) (Event, bool) {
 			p.logger.Warn("ndjson: bad measurement line", "err", err.Error())
 			return Event{}, false
 		}
+		// Check if value is explicitly null or missing (should be a valid number)
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(line), &raw); err == nil {
+			if val, ok := raw["value"]; ok {
+				if val == nil {
+					p.logger.Warn("ndjson: measurement with null value", "id", m.ID, "type", m.Type)
+					return Event{}, false
+				}
+			} else {
+				p.logger.Warn("ndjson: measurement with missing value field", "id", m.ID, "type", m.Type)
+				return Event{}, false
+			}
+		}
 		return Event{Measurement: &m}, true
 
 	case KindDiagnosis:
