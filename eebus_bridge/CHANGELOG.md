@@ -6,10 +6,15 @@
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-07-20
+
+### Fixed
+- correction du fichier de configuration "config.yaml" manque map:
+
 ## [0.1.1] - 2026-07-20
 
 ### Fixed
-- Correciton de la syntaxe Dockerfile
+- Correxiton de la syntaxe Dockerfile
 
 ## [0.1.0] - 2026-07-19
 
