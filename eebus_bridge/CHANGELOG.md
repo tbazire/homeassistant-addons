@@ -5,6 +5,12 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.3-dev] - 2026-07-20
+
+### Fixed
+- Ajout d'une fonction de normalisation des unité de mesure
+
 ## [0.1.2-dev] - 2026-07-20
 
 Passage en dev suite à de nombreux bug
