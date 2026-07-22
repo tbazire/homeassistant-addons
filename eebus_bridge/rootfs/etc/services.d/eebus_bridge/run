@@ -22,7 +22,7 @@ main() {
     bashio::log.info "eebus_bridge starting"
 
     # 1. Persistent data dir for eebusd (cert + ring buffer). Must survive
-    #    restarts. The directory is pre-created in Dockerfile with 0755 perms.
+    #    restarts. HA mounts /data at runtime with root ownership.
     local data_dir="${EEBUS_DATA_DIR:-/data/eebus}"
     mkdir -p "${data_dir}"
 

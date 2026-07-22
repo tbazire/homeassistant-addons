@@ -66,10 +66,9 @@ FROM ${BUILD_FROM}
 ARG BUILD_FROM
 ARG BUILD_VERSION
 
-# Run as root. The /data mount is provided by HA and is writable by root.
+# Run as root. The /data mount is provided by HA at runtime and is writable by root.
 # The add-on runs with host_network: true, which is required for EEBUS mDNS.
 # No need for a dedicated non-root user since no privileged capabilities are used.
-RUN mkdir -p /data/eebus && chmod 0755 /data/eebus
 
 # Copy the static binaries in.
 COPY --from=eebusd-builder /out/eebusd /usr/local/bin/eebusd
