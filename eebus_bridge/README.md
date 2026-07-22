@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 Tommy Bazire -->
 
-# EEBUS Bridge
+# EEBUS Bridge [EXPERIMENTALE]
 
 [![Version](https://img.shields.io/badge/version-0.1.0-41BDF5.svg)](./config.yaml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](../LICENSE)
@@ -11,8 +11,7 @@ device on your local network — heat pumps, wallboxes, inverters, energy
 managers — and exposes its measurements as native Home Assistant sensors via
 **MQTT discovery**. No vendor-specific code, no hardcoded device IDs.
 
-> Works with: Saunier Duval VR920, Bosch / Buderus heat pumps, SMA wallboxes,
-> and any device implementing the EEBUS SHIP/SPINE standard.
+> Works with: Saunier Duval/Vaillant VR920, and any device implementing the EEBUS SHIP/SPINE standard.
 
 ## How it works
 
