@@ -7,7 +7,7 @@
 # Responsibilities:
 #   1. Read the HA options via bashio.
 #   2. Resolve the MQTT broker (Supervisor service first, user override next).
-#   3. Persist the SHIP cert dir (/data/eebus) and tighten its permissions.
+#   3. Ensure SHIP cert dir (/data/eebus) exists.
 #   4. Export every option as an EEBUS_* env var, then exec eebus-bridge.
 #
 # Security: secrets (MQTT password, SHIP secret) are NEVER logged. They are
@@ -22,16 +22,9 @@ main() {
     bashio::log.info "eebus_bridge starting"
 
     # 1. Persistent data dir for eebusd (cert + ring buffer). Must survive
-    #    restarts. The directory is pre-created in Dockerfile with 0775 perms.
-    #    HA Supervisor mounts /data with root:root ownership, but the eebus
-    #    group has write access via the 0775 mode.
+    #    restarts. The directory is pre-created in Dockerfile with 0755 perms.
     local data_dir="${EEBUS_DATA_DIR:-/data/eebus}"
     mkdir -p "${data_dir}"
-    # Only change permissions if we're running as root (HA builder context)
-    # Otherwise, skip chmod since the eebus group already has write access
-    if [ "$(id -u)" -eq 0 ]; then
-        chmod 0775 "${data_dir}" 2>/dev/null || true
-    fi
 
     # 2. MQTT broker resolution. Supervisor service (Mosquitto add-on) wins by
     #    default; the user can override with explicit mqtt.host.

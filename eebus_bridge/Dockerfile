@@ -66,14 +66,10 @@ FROM ${BUILD_FROM}
 ARG BUILD_FROM
 ARG BUILD_VERSION
 
-# Drop to a non-root user. HA add-ons normally run as root, but the add-on
-# needs no privileged capability (host_network is enough for EEBUS), so we
-# create a dedicated unprivileged account.
-# The /data mount is provided by HA and is chowned to root by the Supervisor;
-# we keep the runtime user non-root and grant it write access via the group.
-# Note: /data/eebus is created with 0775 permissions so the eebus group can write.
-RUN addgroup -S eebus && adduser -S -G eebus -h /app eebus \
-    && mkdir -p /data/eebus && chmod 0775 /data/eebus
+# Run as root. The /data mount is provided by HA and is writable by root.
+# The add-on runs with host_network: true, which is required for EEBUS mDNS.
+# No need for a dedicated non-root user since no privileged capabilities are used.
+RUN mkdir -p /data/eebus && chmod 0755 /data/eebus
 
 # Copy the static binaries in.
 COPY --from=eebusd-builder /out/eebusd /usr/local/bin/eebusd

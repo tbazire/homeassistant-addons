@@ -10,8 +10,7 @@
 #   - No privileged, full_access, host_pid, host_dbus, host_ipc, docker_api,
 #     map, usb, gpio or uart. Absence is asserted by tests/test_config_validation.py.
 #   - init: false is MANDATORY with s6-overlay v3 base images.
-#   - /data mount: HA provides persistent storage, pre-created with group-writable
-#     permissions so the non-root eebus user can store SHIP certificates.
+#   - Runs as root (default HA behavior with no privileged capabilities).
 #
 # Schema vocabulary reference:
 #   https://developers.home-assistant.io/docs/add-ons/configuration
