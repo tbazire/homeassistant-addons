@@ -2,9 +2,9 @@
 <!-- SPDX-FileCopyrightText: 2026 Tommy Bazire -->
 
 # Home Assistant Add-ons
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/X3E023PP7J)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![Add-on: eebus_bridge](https://img.shields.io/badge/add--on-eebus__bridge-41BDF5.svg)](./eebus_bridge)
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/X3E023PP7J)
 
 A collection of Home Assistant add-ons maintained by **Tommy Bazire**.
 
