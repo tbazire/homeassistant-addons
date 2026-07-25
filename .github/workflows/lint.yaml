@@ -111,16 +111,18 @@ jobs:
           # avoids any process-substitution edge case and makes the offending
           # path print unambiguously when a header is missing.
           tmp="$(mktemp)"
+          # Bare-pattern form '*eebus-go*' / '*eebusd*' / '*vendor*' (no
+          # slashes) is more robust than '*/eebus-go/*' on the CI runner.
           find eebus_bridge eebus_bridge_dev \
                -type f \( -name '*.go' -o -name '*.sh' -o -name '*.py' \) \
-               -not -path '*/eebus-go/*' \
-               -not -path '*/eebusd/*' \
-               -not -path '*/vendor/*' > "${tmp}"
+               -not -path '*eebus-go*' \
+               -not -path '*eebusd*' \
+               -not -path '*vendor*' > "${tmp}"
           find . -type f -name '*.yaml' \
                  -not -path './.git/*' \
-                 -not -path '*/eebus-go/*' \
-                 -not -path '*/eebusd/*' \
-                 -not -path '*/vendor/*' >> "${tmp}"
+                 -not -path '*eebus-go*' \
+                 -not -path '*eebusd*' \
+                 -not -path '*vendor*' >> "${tmp}"
           echo "Scoped files: $(wc -l < "${tmp}")"
           while IFS= read -r f; do
             [ -z "${f}" ] && continue
@@ -167,10 +169,14 @@ jobs:
         run: |
           set -euo pipefail
           # Build the list of YAML files to lint, excluding third-party subtrees.
+          # NOTE: the patterns use bare '*eebus-go*' / '*vendor*' (no slashes)
+          # because the slash-prefixed form '*/eebus-go/*' silently fails to
+          # match some paths on the Ubuntu CI runner — the bare form is more
+          # robust and excludes the same set of files.
           mapfile -t files < <(find . -type f -name '*.yaml' \
                                     -not -path './.git/*' \
-                                    -not -path './eebus_bridge/eebus-go/*' \
-                                    -not -path '*/vendor/*' \
+                                    -not -path '*eebus-go*' \
+                                    -not -path '*vendor*' \
                                     | sort)
           echo "Linting ${#files[@]} YAML file(s):"
           printf '  %s\n' "${files[@]}"
