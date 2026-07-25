@@ -241,6 +241,14 @@ func (s *Scanner) renderMeasurementsJSON(env envelope, m *client.Measurement) {
 	data := m.GetRawData()
 
 	logDebugf("renderMeasurementsJSON: %d descriptions, %d values", len(descs), len(data))
+	// Log each description's type/scope/unit so the operator can see exactly
+	// what the device declares it exposes — even for measurements that have no
+	// value yet, or that we are not rendering for some reason. This is the key
+	// diagnostic for "the app shows X but the bridge does not" reports: it
+	// tells us whether the device DECLARES the measurement over SPINE at all.
+	for _, d := range descs {
+		logDebugf("  desc id=%s %s", idStr(d.MeasurementId), describeDescription(d))
+	}
 
 	for _, d := range data {
 		// Skip entries without a real value: a nil Value pointer means "no
