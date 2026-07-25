@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Bazire
+#
+# Home Assistant add-on manifest for EEBUS Bridge (Dev channel).
+#
+# This is the DEVELOPMENT channel of eebus_bridge. It ships the same code as
+# the production add-on but on a separate slug / image, so users can preview
+# upcoming changes. IMPORTANT: the two add-ons are MUTUALLY EXCLUSIVE — they
+# share the same SHIP port (4711), the same MQTT ClientID and the same HA
+# discovery topic namespace. Only one of them can run at a time on a given
+# Home Assistant instance.
+#
+# Security posture (identical to the production add-on):
+#   - host_network: true  REQUIRED. EEBUS uses mDNS multicast (UDP 5353) and
+#     expects the inbound SHIP TCP connection to come from the LAN. Anything
+#     less than host networking breaks pairing on most EEBUS gateways.
+#   - No privileged, full_access, host_pid, host_dbus, host_ipc, docker_api,
+#     map, usb, gpio or uart. Absence is asserted by tests/test_config_validation.py.
+#   - init: false is MANDATORY with s6-overlay v3 base images.
+#   - Runs as root (default HA behavior with no privileged capabilities).
+#
+# Schema vocabulary reference:
+#   https://developers.home-assistant.io/docs/add-ons/configuration
+
+name: EEBUS Bridge (Dev)
+version: "0.1.0-dev"
+slug: eebus_bridge_dev
+description: >-
+  DEVELOPMENT channel of the EEBUS Bridge. Same code as the production
+  add-on, used to preview upcoming changes. Do NOT run alongside the
+  production add-on: they share the same SHIP port (4711), MQTT ClientID
+  and discovery topics — only one can be active at a time.
+url: https://github.com/tbazire/homeassistant-addons/tree/main/eebus_bridge_dev
+arch:
+  - aarch64
+  - amd64
+  - i386
+image: "ghcr.io/tbazire/{arch}-eebus-bridge-dev"
+init: false
+startup: services
+boot: auto
+timeout: 30
+host_network: true
+apparmor: false
+map:
+  - type: data
+    read_only: False
+    path: /data
+services:
+  - mqtt:want
+options:
+  log_level: "info"
+  poll_interval: "60"
+  pairing:
+    auto_accept: false
+    remote_ski: ""
+    secret: ""
+  eebusd:
+    brand: "EEBusBridge"
+    model: "Bridge-1"
+    serial: "bridge-0001"
+    vendor: "EBRG"
+    port: 4711
+  mqtt:
+    prefix: "eebus"
+    discovery_prefix: "homeassistant"
+schema:
+  log_level: list(trace|debug|info|warning|error)
+  poll_interval: int(1,86400)?
+  pairing:
+    auto_accept: bool
+    remote_ski: str
+    secret: password?
+  eebusd:
+    brand: str
+    model: str
+    serial: str
+    vendor: str
+    port: port
+  mqtt:
+    prefix: match(^[A-Za-z0-9_\-/]+$)
+    discovery_prefix: str

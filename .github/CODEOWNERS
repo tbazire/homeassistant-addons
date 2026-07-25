@@ -7,11 +7,14 @@
 * @tbazire
 
 # The EEBUS daemon core is sensitive (protocol handling); always request review
-/eebus_bridge/eebusd/ @tbazire
+/eebus_bridge/eebusd/     @tbazire
+/eebus_bridge_dev/eebusd/ @tbazire
 
 # The HA add-on schema is user-facing; always request review
-/eebus_bridge/config.yaml @tbazire
+/eebus_bridge/config.yaml     @tbazire
+/eebus_bridge_dev/config.yaml @tbazire
 
 # Security-sensitive files
 /SECURITY.md @tbazire
-/eebus_bridge/Dockerfile @tbazire
+/eebus_bridge/Dockerfile     @tbazire
+/eebus_bridge_dev/Dockerfile @tbazire

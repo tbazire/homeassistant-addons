@@ -1,0 +1,11 @@
+# .mockery.yaml
+inpackage: false
+dir: "{{ .InterfaceDir }}/../mocks"
+structname: "{{.InterfaceName}}"
+pkgname: "mocks"
+filename: "{{.InterfaceName}}.go"
+all: true
+template: testify
+packages:
+  github.com/enbility/eebus-go/api:
+  github.com/enbility/eebus-go/usecases/api:

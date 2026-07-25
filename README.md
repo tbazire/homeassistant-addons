@@ -4,6 +4,7 @@
 # Home Assistant Add-ons
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![Add-on: eebus_bridge](https://img.shields.io/badge/add--on-eebus__bridge-41BDF5.svg)](./eebus_bridge)
+[![Add-on: eebus_bridge_dev](https://img.shields.io/badge/add--on-eebus__bridge__dev-orange.svg)](./eebus_bridge_dev)
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/X3E023PP7J)
 
 A collection of Home Assistant add-ons maintained by **Tommy Bazire**.
@@ -12,7 +13,8 @@ A collection of Home Assistant add-ons maintained by **Tommy Bazire**.
 
 | Add-on | Description | Status |
 |--------|-------------|--------|
-| [**EEBUS Bridge**](./eebus_bridge) | Generic EEBUS bridge. Pairs with any EEBUS device on the local network (heat pumps, wallboxes, inverters, …) and exposes its measurements as Home Assistant sensors via MQTT discovery. | v0.1.2-dev |
+| [**EEBUS Bridge**](./eebus_bridge) | Generic EEBUS bridge. Pairs with any EEBUS device on the local network (heat pumps, wallboxes, inverters, …) and exposes its measurements as Home Assistant sensors via MQTT discovery. | stable |
+| [**EEBUS Bridge (Dev)**](./eebus_bridge_dev) | Development channel of EEBUS Bridge. Same code as the production add-on, used to preview upcoming changes. ⚠️ Mutually exclusive with the production add-on (same SHIP port, MQTT ClientID and discovery topics — only one can run at a time). | dev |
 
 ## Installation
 
@@ -24,7 +26,11 @@ To use these add-ons in your Home Assistant instance:
    ```
    https://github.com/tbazire/homeassistant-addons
    ```
-4. The add-ons from this repository now appear in the store. Click **EEBUS Bridge** → **Install**.
+4. The add-ons from this repository now appear in the store. Click **EEBUS Bridge** (or **EEBUS Bridge (Dev)** for the development channel) → **Install**.
+
+> 💡 Most users want the **production** add-on. The **Dev** channel exists to
+> preview upcoming changes and collect early feedback; it is mutually exclusive
+> with the production add-on and should not be run alongside it.
 
 Detailed installation and configuration instructions live in each add-on's own `README.md`.
 
