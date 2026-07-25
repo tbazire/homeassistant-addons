@@ -92,13 +92,19 @@ type configurationLine struct {
 
 type measurementLine struct {
 	envelope
-	ID        string  `json:"id"`
-	Type      string  `json:"type,omitempty"`
-	Commodity string  `json:"commodity,omitempty"`
-	Scope     string  `json:"scope,omitempty"`
-	Unit      string  `json:"unit,omitempty"`
-	Value     float64 `json:"value,omitempty"`
-	Scale     int     `json:"scale,omitempty"`
+	ID        string `json:"id"`
+	Type      string `json:"type,omitempty"`
+	Commodity string `json:"commodity,omitempty"`
+	Scope     string `json:"scope,omitempty"`
+	Unit      string `json:"unit,omitempty"`
+	// Value is ALWAYS present on emitted lines: data without a real value is
+	// skipped upstream (see renderMeasurementsJSON), so a line reaching the wire
+	// always carries a concrete number — including a legitimate 0 (a power of
+	// 0W on an idle heat pump is a real measurement, not "no data"). We must
+	// NOT use omitempty here, otherwise 0 would be silently dropped and the
+	// bridge would treat the line as "missing value" and discard it.
+	Value float64 `json:"value"`
+	Scale int     `json:"scale,omitempty"`
 }
 
 type diagnosisLine struct {
@@ -217,7 +223,7 @@ func (s *Scanner) renderConfigurationJSON(env envelope, dc *client.DeviceConfigu
 func (s *Scanner) renderMeasurementsJSON(env envelope, m *client.Measurement) {
 	descs, err := m.GetDescriptionsForFilter(model.MeasurementDescriptionDataType{})
 	if err != nil {
-		return
+		descs = nil
 	}
 	descByID := make(map[model.MeasurementIdType]model.MeasurementDescriptionDataType, len(descs))
 	for _, d := range descs {
@@ -225,12 +231,38 @@ func (s *Scanner) renderMeasurementsJSON(env envelope, m *client.Measurement) {
 			descByID[*d.MeasurementId] = d
 		}
 	}
+
+	// Pull raw measurement data. We no longer rely on GetDataForFilter (which
+	// returns ErrDataNotAvailable when the description list is empty and would
+	// therefore mask legitimate values). We instead read the raw
+	// MeasurementListDataType directly so that data pushed by the device via a
+	// subscription is rendered even if descriptions have not arrived yet.
 	data, _ := m.GetDataForFilter(model.MeasurementDescriptionDataType{})
+	if len(data) == 0 {
+		// Fallback: iterate over descriptions only (descriptions may carry a
+		// default value, though in practice this is rare). This keeps the
+		// contract "descriptions OR data present => something is emitted".
+		data = nil
+	}
+
+	logDebugf("renderMeasurementsJSON: %d descriptions, %d values", len(descs), len(data))
+
 	for _, d := range data {
+		// Skip entries without a real value: a nil Value pointer means "no
+		// measurement yet", which must not be rendered as 0 (it would be
+		// misinterpreted as a real zero by HA). Only entries that actually
+		// carry a ScaledNumber value are emitted.
+		if d.Value == nil {
+			continue
+		}
 		desc := descByID[*d.MeasurementId]
 		line := measurementLine{
 			envelope: env.withKind(kindMeasurement),
 			ID:       idStr(d.MeasurementId),
+			Value:    d.Value.GetValue(),
+		}
+		if d.Value.Scale != nil {
+			line.Scale = int(*d.Value.Scale)
 		}
 		if desc.MeasurementType != nil {
 			line.Type = string(*desc.MeasurementType)
@@ -243,12 +275,6 @@ func (s *Scanner) renderMeasurementsJSON(env envelope, m *client.Measurement) {
 		}
 		if desc.Unit != nil {
 			line.Unit = normalizeUnit(string(*desc.Unit))
-		}
-		if d.Value != nil {
-			line.Value = d.Value.GetValue()
-			if d.Value.Scale != nil {
-				line.Scale = int(*d.Value.Scale)
-			}
 		}
 		s.writeJSON(line)
 	}
