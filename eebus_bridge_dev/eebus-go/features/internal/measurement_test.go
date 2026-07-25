@@ -305,6 +305,60 @@ func (s *MeasurementSuite) Test_GetValues() {
 	assert.NotNil(s.T(), data)
 }
 
+// Test_GetRawData_ReturnsEmptyWhenNoData is the baseline: with nothing injected,
+// GetRawData returns nil on both the local and remote SUTs.
+func (s *MeasurementSuite) Test_GetRawData_ReturnsEmptyWhenNoData() {
+	assert.Nil(s.T(), s.localSut.GetRawData())
+	assert.Nil(s.T(), s.remoteSut.GetRawData())
+}
+
+// Test_GetRawData_ReturnsValuesWithoutDescriptions is the core regression test
+// for the bug where values pushed by the device without (or before) their
+// descriptions were silently dropped by GetDataForFilter. Here we inject ONLY
+// MeasurementListData — no descriptions — and assert GetRawData still returns
+// every entry, while GetDataForFilter still bails (proving the two differ).
+func (s *MeasurementSuite) Test_GetRawData_ReturnsValuesWithoutDescriptions() {
+	// Sanity check: GetDataForFilter returns nothing before any data.
+	filter := model.MeasurementDescriptionDataType{}
+	data, err := s.localSut.GetDataForFilter(filter)
+	assert.NotNil(s.T(), err)
+	assert.Nil(s.T(), data)
+	data, err = s.remoteSut.GetDataForFilter(filter)
+	assert.NotNil(s.T(), err)
+	assert.Nil(s.T(), data)
+
+	// Inject ONLY values — no descriptions. This is the VR920 scenario:
+	// measurementListData arrives but measurementDescriptionListData does not.
+	s.addData()
+
+	// GetDataForFilter still bails (descriptions absent) — this is the existing
+	// behavior we are working around, not changing.
+	data, err = s.localSut.GetDataForFilter(filter)
+	assert.NotNil(s.T(), err)
+	assert.Nil(s.T(), data)
+	data, err = s.remoteSut.GetDataForFilter(filter)
+	assert.NotNil(s.T(), err)
+	assert.Nil(s.T(), data)
+
+	// GetRawData returns every value present, bypassing the description gate.
+	localRaw := s.localSut.GetRawData()
+	assert.NotNil(s.T(), localRaw)
+	assert.Len(s.T(), localRaw, 2)
+	remoteRaw := s.remoteSut.GetRawData()
+	assert.NotNil(s.T(), remoteRaw)
+	assert.Len(s.T(), remoteRaw, 2)
+
+	// Both SUTs see the same two measurementIds with value 9 (see addData).
+	for _, item := range localRaw {
+		assert.NotNil(s.T(), item.Value)
+		assert.Equal(s.T(), 9.0, item.Value.GetValue())
+	}
+	for _, item := range remoteRaw {
+		assert.NotNil(s.T(), item.Value)
+		assert.Equal(s.T(), 9.0, item.Value.GetValue())
+	}
+}
+
 // helper
 
 func (s *MeasurementSuite) addDescription() {

@@ -23,6 +23,43 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.3.0-dev] - 2026-07-25
+
+### Fixed
+- **Measurements without a matching description are no longer hidden.** This was
+  the root cause of the "only 6 sensors show up" issue observed on the Saunier
+  Duval VR920 heat pump. `MeasurementCommon.GetDataForFilter` (in the vendored
+  `eebus-go` lib) bails with `ErrDataNotAvailable` as soon as
+  `MeasurementDescriptionListData` is empty — even when raw
+  `MeasurementListData` values are present in the SPINE cache (e.g. pushed by
+  the device via a subscription before, or without, their descriptions). The
+  scanner's `renderMeasurementsJSON` therefore only ever emitted the subset of
+  values whose description had already arrived, dropping the rest.
+  The fix adds a new `MeasurementCommon.GetRawData()` method that reads
+  `MeasurementListData` directly from the SPINE feature cache, bypassing the
+  description gate. `renderMeasurementsJSON` (and the text-mode
+  `printMeasurements`) now iterate over `GetRawData()`, so every value the
+  device exposes is emitted — enriched with `type` / `commodity` / `scope` /
+  `unit` from the description when present, emitted without those fields when
+  the description is absent (the bridge still creates a sensor, named after the
+  measurement id).
+
+### Added
+- `MeasurementCommon.GetRawData()` and the corresponding
+  `MeasurementCommonInterface` entry (in the locally-replaced `eebus-go`).
+- Regression tests `Test_GetRawData_ReturnsEmptyWhenNoData` and
+  `Test_GetRawData_ReturnsValuesWithoutDescriptions` in
+  `eebus-go/features/internal/measurement_test.go`, covering the exact
+  scenario (values present, descriptions absent) that was failing on the VR920.
+
+### Notes
+- Audit finding (documented for future work): the `ElectricalConnection`
+  feature carries only wiring metadata, permitted value ranges and nameplate
+  characteristics — NOT live voltage/current/frequency values. Those live
+  exclusively in the `Measurement` feature, so no `ElectricalConnection`
+  rendering is needed to recover the missing telemetry. Exposing EC limits /
+  characteristics as HA sensors is left for a later, separate change.
+
 ## [0.2.0-dev] - 2026-07-25
 
 ### Fixed
@@ -82,6 +119,7 @@ _Nothing yet._
 - The code source is intentionally kept identical to the production add-on
   at fork time. Future dev-only changes will be listed here.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.2.0...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.3.0...HEAD
+[0.3.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.3.0
 [0.2.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.2.0
 [0.1.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.1.0

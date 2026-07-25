@@ -232,18 +232,13 @@ func (s *Scanner) renderMeasurementsJSON(env envelope, m *client.Measurement) {
 		}
 	}
 
-	// Pull raw measurement data. We no longer rely on GetDataForFilter (which
-	// returns ErrDataNotAvailable when the description list is empty and would
-	// therefore mask legitimate values). We instead read the raw
-	// MeasurementListDataType directly so that data pushed by the device via a
-	// subscription is rendered even if descriptions have not arrived yet.
-	data, _ := m.GetDataForFilter(model.MeasurementDescriptionDataType{})
-	if len(data) == 0 {
-		// Fallback: iterate over descriptions only (descriptions may carry a
-		// default value, though in practice this is rare). This keeps the
-		// contract "descriptions OR data present => something is emitted".
-		data = nil
-	}
+	// Read raw measurement values DIRECTLY from the SPINE cache, bypassing
+	// GetDataForFilter (which bails with ErrDataNotAvailable when the
+	// description list is empty and would therefore mask legitimate values
+	// pushed by the device via a subscription). GetRawData returns every
+	// MeasurementData entry present, even without a matching description —
+	// which is exactly what a "scan everything" client must do.
+	data := m.GetRawData()
 
 	logDebugf("renderMeasurementsJSON: %d descriptions, %d values", len(descs), len(data))
 
@@ -401,19 +396,29 @@ func (s *Scanner) printDeviceDiagnosis(addr string, dd *client.DeviceDiagnosis) 
 }
 
 // printMeasurements renders the current measurement cache as a text table.
+//
+// Like renderMeasurementsJSON, this reads values directly via GetRawData so
+// that measurements pushed by the device without a matching description are
+// still shown (they previously were dropped silently when descriptions were
+// empty or had not arrived yet).
 func (s *Scanner) printMeasurements(addr string, m *client.Measurement) {
 	descs, err := m.GetDescriptionsForFilter(model.MeasurementDescriptionDataType{})
-	if err != nil || len(descs) == 0 {
-		return
-	}
 	descByID := make(map[model.MeasurementIdType]model.MeasurementDescriptionDataType, len(descs))
-	for _, d := range descs {
-		if d.MeasurementId != nil {
-			descByID[*d.MeasurementId] = d
+	if err == nil {
+		for _, d := range descs {
+			if d.MeasurementId != nil {
+				descByID[*d.MeasurementId] = d
+			}
 		}
 	}
-	data, _ := m.GetDataForFilter(model.MeasurementDescriptionDataType{})
+
+	data := m.GetRawData()
 	if len(data) == 0 {
+		if len(descs) == 0 {
+			return // nothing to show at all
+		}
+		// Descriptions present but no values yet: show the descriptor labels so
+		// the operator can still see what the device exposes.
 		logInfof("  [%s] measurements: %d descriptors, no values yet:", addr, len(descs))
 		for _, d := range descs {
 			logInfof("    id=%s %s", idStr(d.MeasurementId), describeDescription(d))
