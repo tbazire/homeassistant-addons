@@ -10,6 +10,16 @@
 #
 # The Docker image itself is built and published by build-dev.yaml; this
 # workflow only manages the GitHub Release object.
+#
+# Version convention (CRUCIAL — keep build-dev.yaml and release-dev.yaml in
+# sync):
+#   - git tag           : dev-v<version>          e.g. dev-v0.2.0
+#   - config.yaml       : "<version>-dev"         e.g. "0.2.0-dev"
+#   - docker image tag  : <version>-dev           e.g. 0.2.0-dev
+#   - CHANGELOG heading : ## [<version>-dev]      e.g. ## [0.2.0-dev]
+#   - release name      : eebus_bridge_dev v<version>-dev
+# So the suffix "-dev" is appended when stripping the tag prefix. The git tag
+# itself does NOT carry the "-dev" suffix (it is implied by the dev-v prefix).
 
 name: Release (Dev)
 
@@ -34,8 +44,11 @@ jobs:
         id: meta
         shell: bash
         run: |
-          # Dev tags use the dev-v* prefix; strip it to get the bare version.
-          version="${GITHUB_REF_NAME#dev-v}"
+          # Dev tags use the dev-v* prefix; strip it and append the "-dev"
+          # channel suffix so the resolved version matches config.yaml and the
+          # CHANGELOG heading (e.g. dev-v0.2.0 -> "0.2.0-dev"). Must stay in
+          # sync with build-dev.yaml's version resolution.
+          version="${GITHUB_REF_NAME#dev-v}-dev"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "Resolved dev version: ${version}"
 
