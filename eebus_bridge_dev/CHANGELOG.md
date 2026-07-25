@@ -23,6 +23,27 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.3.1-dev] - 2026-07-26
+
+### Added
+- **Diagnostic logging for "missing metrics" reports.** Two improvements to
+  make it possible to tell, from the add-on log alone, whether a metric the
+  device's own app shows is actually exposed over SPINE:
+  - `HandleEvent` now logs the entity address and entity type on every SPINE
+    event (previously only `entity=<bool>`, which hid WHICH entity a
+    `measurementListData` / `measurementDescriptionListData` arrived on).
+  - `renderMeasurementsJSON` now logs every description the device declares
+    (`id=X type=... commodity=... scope=... unit=...`) at debug level, not just
+    the count. This shows exactly what the device exposes over SPINE — even
+    measurements that have no value yet, or that we are not rendering.
+
+### Notes
+- No behavior change: the same measurements are still published. This release
+  only adds observability so we can determine, on the VR920, whether the
+  missing humidity / water-pressure / heating-curve metrics are never sent by
+  the device over SPINE (in which case the vendor app is using a different
+  channel) or are sent but dropped somewhere in our pipeline.
+
 ## [0.3.0-dev] - 2026-07-25
 
 ### Fixed
@@ -119,7 +140,8 @@ _Nothing yet._
 - The code source is intentionally kept identical to the production add-on
   at fork time. Future dev-only changes will be listed here.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.3.0...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.3.1...HEAD
+[0.3.1-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.3.1
 [0.3.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.3.0
 [0.2.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.2.0
 [0.1.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.1.0
