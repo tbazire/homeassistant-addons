@@ -67,13 +67,18 @@ type Configuration struct {
 
 type Measurement struct {
 	Line
-	ID        string  `json:"id"`
-	Type      string  `json:"type,omitempty"`
-	Commodity string  `json:"commodity,omitempty"`
-	Scope     string  `json:"scope,omitempty"`
-	Unit      string  `json:"unit,omitempty"`
-	Value     float64 `json:"value,omitempty"`
-	Scale     int     `json:"scale,omitempty"`
+	ID        string `json:"id"`
+	Type      string `json:"type,omitempty"`
+	Commodity string `json:"commodity,omitempty"`
+	Scope     string `json:"scope,omitempty"`
+	Unit      string `json:"unit,omitempty"`
+	// Value is a pointer so we can distinguish a legitimately absent value
+	// (nil → drop the event) from a real measurement equal to zero (non-nil →
+	// publish 0). Previously this was a plain float64 with omitempty, which
+	// made a real 0 indistinguishable from "no value" and silently dropped
+	// legitimate zero measurements (idle power, empty counter, 0°C, …).
+	Value *float64 `json:"value"`
+	Scale int      `json:"scale,omitempty"`
 }
 
 type Diagnosis struct {
@@ -184,18 +189,15 @@ func (p *Parser) parseLine(line string) (Event, bool) {
 			p.logger.Warn("ndjson: bad measurement line", "err", err.Error())
 			return Event{}, false
 		}
-		// Check if value is explicitly null or missing (should be a valid number)
-		var raw map[string]any
-		if err := json.Unmarshal([]byte(line), &raw); err == nil {
-			if val, ok := raw["value"]; ok {
-				if val == nil {
-					p.logger.Warn("ndjson: measurement with null value", "id", m.ID, "type", m.Type)
-					return Event{}, false
-				}
-			} else {
-				p.logger.Warn("ndjson: measurement with missing value field", "id", m.ID, "type", m.Type)
-				return Event{}, false
-			}
+		// value is a pointer: nil means either the field was absent or it was
+		// JSON null. Both cases are "no real measurement" → drop the event
+		// (HA cannot do anything useful with a sensor that has no value, and
+		// rendering 0 would be wrong: it is a fake 0, not a measurement).
+		// A non-nil pointer — including one that points at 0 — is a real value.
+		if m.Value == nil {
+			p.logger.Debug("ndjson: measurement with no value, skipping",
+				"id", m.ID, "type", m.Type)
+			return Event{}, false
 		}
 		return Event{Measurement: &m}, true
 

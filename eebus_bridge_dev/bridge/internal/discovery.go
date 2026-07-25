@@ -113,7 +113,12 @@ func (m *Mapper) OnManufacturer(mf *Manufacturer) *HADevice {
 func (m *Mapper) OnMeasurement(me *Measurement) Discovery {
 	uid := uniqueID(me.SKI, me.Entity, me.ID)
 	stateTopic := fmt.Sprintf("%s/%s/%s/%s/state", m.prefix, me.SKI, entitySafe(me.Entity), me.ID)
-	stateValue := formatValue(me.Value, me.Scale)
+	// me.Value is *float64: nil events are filtered upstream (parseLine), so
+	// here it is always non-nil. Defensive guard kept for direct callers/tests.
+	stateValue := ""
+	if me.Value != nil {
+		stateValue = formatValue(*me.Value, me.Scale)
+	}
 
 	disc := Discovery{
 		StateTopic: stateTopic,

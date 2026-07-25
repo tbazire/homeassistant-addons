@@ -50,6 +50,15 @@ options.json
 /eebus-scanner
 /scanner
 /bridge
+# Binaries produced by `go build` at the root of an add-on module (e.g.
+# eebus_bridge_dev/bridge/bridge, eebus_bridge_dev/eebusd/scanner). These are
+# local build outputs, not source — never commit them. The leading-slash rules
+# above only match at the repository root, so we add explicit patterns for the
+# nested add-on directories.
+eebus_bridge/bridge/bridge
+eebus_bridge/eebusd/scanner
+eebus_bridge_dev/bridge/bridge
+eebus_bridge_dev/eebusd/scanner
 *.test
 *.out
 bin/

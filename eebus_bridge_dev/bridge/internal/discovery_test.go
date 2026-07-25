@@ -63,7 +63,7 @@ func TestOnMeasurementFirstCallPublishesDiscovery(t *testing.T) {
 		Type:  "Power",
 		Scope: "AC-Output",
 		Unit:  "W",
-		Value: 1234.5,
+		Value: ptrFloat(1234.5),
 	}
 	disc := m.OnMeasurement(me)
 	if disc.Config == nil {
@@ -87,7 +87,7 @@ func TestOnMeasurementFirstCallPublishesDiscovery(t *testing.T) {
 func TestOnMeasurementSecondCallSkipsDiscovery(t *testing.T) {
 	m := NewMapper("eebus", "homeassistant")
 	ski := "aaaabbbbccccddddeeee00001111222233334444"
-	me := &Measurement{Line: Line{SKI: ski, Entity: "3.1"}, ID: "5", Value: 1}
+	me := &Measurement{Line: Line{SKI: ski, Entity: "3.1"}, ID: "5", Value: ptrFloat(1)}
 	m.OnMeasurement(me)
 	disc := m.OnMeasurement(me)
 	if disc.Config != nil {
@@ -97,6 +97,35 @@ func TestOnMeasurementSecondCallSkipsDiscovery(t *testing.T) {
 		t.Errorf("second call must still publish state")
 	}
 }
+
+// TestOnMeasurementZeroValuePublishesState is the regression test for the
+// "value=0 dropped" bug at the discovery layer: a measurement of exactly 0
+// MUST still publish a state ("0"), otherwise the HA sensor would never see
+// a real zero (idle power, empty counter, etc.).
+func TestOnMeasurementZeroValuePublishesState(t *testing.T) {
+	m := NewMapper("eebus", "homeassistant")
+	ski := "aaaabbbbccccddddeeee00001111222233334444"
+	m.OnManufacturer(&Manufacturer{Line: Line{SKI: ski}, BrandName: "Brand", DeviceName: "Model"})
+
+	me := &Measurement{
+		Line:  Line{SKI: ski, Entity: "3.1"},
+		ID:    "7",
+		Type:  "Power",
+		Unit:  "W",
+		Value: ptrFloat(0),
+	}
+	disc := m.OnMeasurement(me)
+	if disc.Config == nil {
+		t.Fatal("first call with value=0 must still publish discovery")
+	}
+	if disc.StateValue != "0" {
+		t.Errorf("state value = %q, want \"0\"", disc.StateValue)
+	}
+}
+
+// ptrFloat is a test helper that returns a pointer to v. Used to build a
+// *float64 Measurement.Value without exposing a public constructor.
+func ptrFloat(v float64) *float64 { return &v }
 
 func TestDeviceClassAndStateClass(t *testing.T) {
 	cases := []struct {

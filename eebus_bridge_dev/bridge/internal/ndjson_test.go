@@ -57,7 +57,7 @@ func TestParserHandlesEachKind(t *testing.T) {
 	if got[2].Configuration == nil || got[2].Configuration.KeyName != "Heartbeat" {
 		t.Errorf("event 2 not a configuration: %+v", got[2])
 	}
-	if got[3].Measurement == nil || got[3].Measurement.Value != 1234.5 {
+	if got[3].Measurement == nil || *got[3].Measurement.Value != 1234.5 {
 		t.Errorf("event 3 not a measurement: %+v", got[3])
 	}
 	if got[4].Diagnosis == nil || got[4].Diagnosis.OperatingState != "normalOperation" {
@@ -91,6 +91,24 @@ func TestParserSkipsMalformedLines(t *testing.T) {
 	}
 }
 
+// TestParserKeepsZeroAfterMalformed ensures a zero value is kept even when it
+// follows a malformed line (regression: scanner.Buffer / state must not be
+// confused by a bad line).
+func TestParserKeepsZeroAfterMalformed(t *testing.T) {
+	in := strings.Join([]string{
+		`not json`,
+		`{"kind":"measurement","ski":"s","entity":"0","time":"t","id":"1","type":"Power","unit":"W","value":0}`,
+	}, "\n")
+	p := NewParser(strings.NewReader(in), fakeLogger{})
+	var got []Event
+	if err := p.Stream(func(ev Event) { got = append(got, ev) }); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if len(got) != 1 || got[0].Measurement == nil || *got[0].Measurement.Value != 0 {
+		t.Fatalf("expected 1 zero-value measurement, got %+v", got)
+	}
+}
+
 func TestParserSkipsNullMeasurementValue(t *testing.T) {
 	in := strings.Join([]string{
 		`{"kind":"measurement","ski":"s","entity":"0","time":"t","id":"1","type":"Power","unit":"W","value":1}`,
@@ -107,10 +125,10 @@ func TestParserSkipsNullMeasurementValue(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("expected 2 valid events (null value skipped), got %d", len(got))
 	}
-	if got[0].Measurement == nil || got[0].Measurement.Value != 1 {
+	if got[0].Measurement == nil || *got[0].Measurement.Value != 1 {
 		t.Errorf("first event should be measurement with value=1, got %+v", got[0])
 	}
-	if got[1].Measurement == nil || got[1].Measurement.Value != 3 {
+	if got[1].Measurement == nil || *got[1].Measurement.Value != 3 {
 		t.Errorf("second event should be measurement with value=3, got %+v", got[1])
 	}
 }
@@ -131,10 +149,61 @@ func TestParserSkipsMissingMeasurementValue(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("expected 2 valid events (missing value skipped), got %d", len(got))
 	}
-	if got[0].Measurement == nil || got[0].Measurement.Value != 1 {
+	if got[0].Measurement == nil || *got[0].Measurement.Value != 1 {
 		t.Errorf("first event should be measurement with value=1, got %+v", got[0])
 	}
-	if got[1].Measurement == nil || got[1].Measurement.Value != 3 {
+	if got[1].Measurement == nil || *got[1].Measurement.Value != 3 {
 		t.Errorf("second event should be measurement with value=3, got %+v", got[1])
+	}
+}
+
+// TestParserKeepsZeroValue is the regression test for the "value=0 dropped"
+// bug. A measurement whose value is exactly 0 (e.g. idle power on a heat pump)
+// MUST be kept and forwarded to the mapper, not silently dropped as "no data".
+// This was previously broken because Value was a float64 with omitempty, which
+// conflated "0" with "absent".
+func TestParserKeepsZeroValue(t *testing.T) {
+	in := strings.Join([]string{
+		`{"kind":"measurement","ski":"s","entity":"0","time":"t","id":"1","type":"Power","unit":"W","value":0}`,
+		`{"kind":"measurement","ski":"s","entity":"0","time":"t","id":"2","type":"Temperature","unit":"°C","value":0}`,
+		`{"kind":"measurement","ski":"s","entity":"0","time":"t","id":"3","type":"Energy","unit":"Wh","value":0}`,
+	}, "\n")
+	p := NewParser(strings.NewReader(in), fakeLogger{})
+
+	var got []Event
+	if err := p.Stream(func(ev Event) { got = append(got, ev) }); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 events (zero values MUST be kept), got %d", len(got))
+	}
+	for i, ev := range got {
+		if ev.Measurement == nil {
+			t.Fatalf("event %d not a measurement", i)
+		}
+		if ev.Measurement.Value == nil {
+			t.Fatalf("event %d: value pointer is nil (should be 0)", i)
+		}
+		if *ev.Measurement.Value != 0 {
+			t.Errorf("event %d: value = %v, want 0", i, *ev.Measurement.Value)
+		}
+	}
+}
+
+// TestParserKeepsNegativeValue ensures negative numbers (export, temperature
+// below zero) are also preserved end-to-end.
+func TestParserKeepsNegativeValue(t *testing.T) {
+	in := `{"kind":"measurement","ski":"s","entity":"0","time":"t","id":"1","type":"Power","unit":"W","value":-1234.5}`
+	p := NewParser(strings.NewReader(in), fakeLogger{})
+
+	var got []Event
+	if err := p.Stream(func(ev Event) { got = append(got, ev) }); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if len(got) != 1 || got[0].Measurement == nil {
+		t.Fatalf("expected 1 measurement event, got %+v", got)
+	}
+	if *got[0].Measurement.Value != -1234.5 {
+		t.Errorf("value = %v, want -1234.5", *got[0].Measurement.Value)
 	}
 }
