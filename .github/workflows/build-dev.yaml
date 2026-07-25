@@ -17,6 +17,14 @@
 #                       multi-arch manifest
 #                       ghcr.io/<owner>/eebus-bridge-dev:<ver>.
 #
+# Version convention (CRUCIAL — keep build-dev.yaml and release-dev.yaml in
+# sync):
+#   - git tag           : dev-v<version>          e.g. dev-v0.2.0
+#   - config.yaml       : "<version>-dev"         e.g. "0.2.0-dev"
+#   - docker image tag  : <version>-dev           e.g. 0.2.0-dev
+# So the suffix "-dev" is appended when stripping the tag prefix. The git tag
+# itself does NOT carry the "-dev" suffix (it is implied by the dev-v prefix).
+#
 # References:
 #   - https://github.com/home-assistant/builder
 #   - https://developers.home-assistant.io/docs/add-ons/publishing/
