@@ -152,3 +152,24 @@ func (m *MeasurementCommon) GetDataForFilter(filter model.MeasurementDescription
 	}
 	return result, nil
 }
+
+// GetRawData returns ALL measurement values present in the SPINE feature cache,
+// regardless of whether descriptions have arrived yet.
+//
+// Unlike GetDataForFilter, this does NOT bail when MeasurementDescriptionListData
+// is empty or missing — it reads MeasurementListData directly via
+// featureDataCopyOfType. This is the reliable way to enumerate values pushed by
+// the device via a subscription, which may arrive before (or without) the
+// corresponding descriptions.
+//
+// Returns nil if no measurement data is cached.
+func (m *MeasurementCommon) GetRawData() []model.MeasurementDataType {
+	function := model.FunctionTypeMeasurementListData
+
+	data, err := featureDataCopyOfType[model.MeasurementListDataType](m.featureLocal, m.featureRemote, function)
+	if err != nil || data == nil || data.MeasurementData == nil {
+		return nil
+	}
+
+	return data.MeasurementData
+}
