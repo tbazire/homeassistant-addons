@@ -34,6 +34,36 @@ updates:
     commit-message:
       prefix: "chore(bridge)"
 
+  # Go modules for the DEV channel copy of eebusd (vendored).
+  # Kept in sync with /eebus_bridge/eebusd manually; Dependabot opens PRs that
+  # must be applied to BOTH add-ons.
+  - package-ecosystem: "gomod"
+    directory: "/eebus_bridge_dev/eebusd"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "go"
+      - "eebusd"
+      - "dev"
+    commit-message:
+      prefix: "chore(eebusd-dev)"
+
+  # Go modules for the DEV channel copy of eebus-bridge.
+  - package-ecosystem: "gomod"
+    directory: "/eebus_bridge_dev/bridge"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "go"
+      - "bridge"
+      - "dev"
+    commit-message:
+      prefix: "chore(bridge-dev)"
+
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"

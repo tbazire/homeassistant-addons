@@ -1,0 +1,60 @@
+package model
+
+import (
+	"fmt"
+)
+
+func (d *DatagramType) PrintMessageOverview(send bool, localFeature, remoteFeature string) string {
+	var result string
+
+	transmission := "Send"
+	device := ""
+	if d.Header.AddressDestination != nil && d.Header.AddressDestination.Device != nil {
+		device = string(*d.Header.AddressDestination.Device)
+	}
+	if !send {
+		transmission = "Recv"
+		if d.Header.AddressSource != nil && d.Header.AddressSource.Device != nil {
+			device = string(*d.Header.AddressSource.Device)
+		}
+		device = fmt.Sprintf("%s:%s to %s", device, remoteFeature, localFeature)
+	}
+
+	cmdClassifier := CmdClassifierType("Unknown")
+	if d.Header.CmdClassifier != nil {
+		cmdClassifier = *d.Header.CmdClassifier
+	}
+	msgCounter := MsgCounterType(0)
+	if d.Header.MsgCounter != nil {
+		msgCounter = *d.Header.MsgCounter
+	}
+	cmd := CmdType{}
+	if len(d.Payload.Cmd) > 0 {
+		cmd = d.Payload.Cmd[0]
+	}
+
+	switch cmdClassifier {
+	case CmdClassifierTypeRead:
+		result = fmt.Sprintf("%s: %s %s %d %s", transmission, device, cmdClassifier, msgCounter, cmd.DataName())
+	case CmdClassifierTypeReply:
+		msgCounterRef := MsgCounterType(0)
+		if d.Header.MsgCounterReference != nil {
+			msgCounterRef = *d.Header.MsgCounterReference
+		}
+		result = fmt.Sprintf("%s: %s %s %d %d %s", transmission, device, cmdClassifier, msgCounter, msgCounterRef, cmd.DataName())
+	case CmdClassifierTypeResult:
+		msgCounterRef := MsgCounterType(0)
+		if d.Header.MsgCounterReference != nil {
+			msgCounterRef = *d.Header.MsgCounterReference
+		}
+		errorNumber := ErrorNumberType(0)
+		if len(d.Payload.Cmd) > 0 && d.Payload.Cmd[0].ResultData != nil && d.Payload.Cmd[0].ResultData.ErrorNumber != nil {
+			errorNumber = *d.Payload.Cmd[0].ResultData.ErrorNumber
+		}
+		result = fmt.Sprintf("%s: %s %s %d %d %s %d", transmission, device, cmdClassifier, msgCounter, msgCounterRef, cmd.DataName(), errorNumber)
+	default:
+		result = fmt.Sprintf("%s: %s %s %d %s", transmission, device, cmdClassifier, msgCounter, cmd.DataName())
+	}
+
+	return result
+}
