@@ -23,6 +23,74 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.4.0-dev] - 2026-07-26
+
+This release opens the **write/control channel**: the add-on is no longer
+read-only. When `write.enable` is set, the bridge can drive the device from
+Home Assistant (schedule / pause / resume / abort a heat-pump compressor via
+OHPCF), with an architecture designed to grow without touching the bridge.
+
+### Added
+
+- **Generic write pipeline (backchannel stdin NDJSON).** The bridge now opens
+  `eebusd`'s stdin and writes `command` lines back to it, symmetric to the
+  existing read-side stream. Two new inbound kinds were added to the NDJSON
+  contract: `controllable` (a device announced support for a write use case)
+  and `command_result` (outcome of a dispatched command). The read-side kinds
+  are unchanged; the parser ignores unknown kinds, so older eebusd binaries
+  remain compatible.
+- **Modular write use-case registry (`eebusd/internal/writes/`).** Each write
+  use case lives in its own sub-package and self-registers at init time via a
+  common `WriteUseCase` interface. Adding LPC / LPP / OPEV / OSCEV later is a
+  new sub-package + one blank import line in `writes/bind.go` — zero change
+  to the dispatcher or the bridge. This keeps the add-on generic: it targets
+  any EEBUS device that advertises the use case, not a specific brand.
+- **OHPCF use case (heat-pump compressor flexibility).** When a paired device
+  exposes the `SmartEnergyManagementPs` feature (e.g. a Saunier Duval/Vaillant
+  VR920), a `climate` entity appears in Home Assistant. Modes map to
+  `Abort` (off) / `Schedule` (auto); presets map to `Pause` / `Resume`. The
+  entity's `action` reflects the real compressor state. If the device rejects
+  a command, the action stays unchanged and the bridge log explains why.
+- **Configuration: `write.enable` / `write.use_cases` / `write.device_profile`.**
+  `write.enable` is `false` by default — the add-on stays strictly read-only
+  out of the box. `use_cases: auto` activates every use case the device
+  announces; an explicit list restricts it. `device_profile` filters discovery
+  by device family (`heatpump` / `evse` / `inverter` / `battery` / `generic`).
+- **Documentation: new "Write commands" section in `DOCS.md`** describing the
+  pipeline, configuration knobs, and the supported/planned use cases. The
+  README also gained a "Controlling devices" section.
+
+### Fixed
+
+- **MQTT subscriptions are now re-applied on reconnect.** The paho client does
+  not remember subscriptions across reconnects when auto-reconnect is enabled;
+  without this fix, a command topic we subscribed to before a network blip
+  would silently stop firing. The bridge now re-subscribes every active topic
+  in its `OnConnect` handler.
+
+### Security
+
+- `write.enable = false` by default: no command surface is exposed unless the
+  operator explicitly opts in (principle of least permission).
+- The dispatcher validates `IsCompatible(entity)` before every write — a write
+  can never reach an entity that did not advertise the use case.
+- Subscriptions target only the command topics the bridge itself announced
+  (no wildcards), so external injection is not possible.
+- `command_result.error` messages carry generic SPINE reasons only; SKIs are
+  masked to their tail in error lines.
+- No new Docker permission, no new dependency, no hardcoded secret.
+
+### Notes
+
+- OHPCF is the only write use case shipped in this release because it is the
+  only one clearly announced by the VR920 (its `smartEnergyManagementPs` +
+  `powerSequence*` data were confirmed by the reference script). LPC, LPP,
+  OPEV and OSCEV will follow as self-contained modules reusing the same
+  pipeline; they are most relevant for wallboxes, inverters and batteries.
+- Setpoint HVAC (writing a target temperature in °C) is **not** covered here:
+  the locally-replaced `eebus-go` does not ship a `Setpoint` feature client
+  yet, so it is left for a later, separate change.
+
 ## [0.3.3-dev] - 2026-07-26
 
 ### Fixed
@@ -192,7 +260,8 @@ _Nothing yet._
 - The code source is intentionally kept identical to the production add-on
   at fork time. Future dev-only changes will be listed here.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.3.3...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.4.0...HEAD
+[0.4.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.4.0
 [0.3.3-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.3.3
 [0.3.2-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.3.2
 [0.3.1-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.3.1

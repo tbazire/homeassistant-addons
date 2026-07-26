@@ -13,6 +13,7 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"os"
@@ -71,6 +72,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// If write commands are enabled, start a goroutine reading NDJSON command
+	// lines from stdin (one JSON object per line). The bridge writes commands
+	// there to drive the write use cases (OHPCF, LPC, …). Each line is routed
+	// to the dispatcher; the result is emitted on stdout as a command_result
+	// line. The goroutine exits when stdin is closed (bridge shutdown).
+	if app.WritesEnabled() {
+		go readCommands(app)
+	}
+
 	// Wait for SIGINT / SIGTERM, then shut down cleanly. mDNS teardown must
 	// happen or the service keeps announcing on the network.
 	internal.AppLog.Infof("running — press Ctrl+C to stop")
@@ -80,4 +90,29 @@ func main() {
 
 	internal.AppLog.Infof("shutting down...")
 	app.Shutdown()
+}
+
+// readCommands reads NDJSON command lines from stdin and forwards each to
+// app.HandleCommand. Errors are logged but never abort the reader: the bridge
+// may emit a malformed line on shutdown and the stream must keep working for
+// the next command.
+func readCommands(app *internal.App) {
+	sc := bufio.NewScanner(os.Stdin)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := sc.Bytes()
+		// The dispatcher wants its own copy: the underlying buffer is reused
+		// across Scan calls, and Dispatch may outlive the next iteration when
+		// the SPINE result is asynchronous.
+		dup := make([]byte, len(line))
+		copy(dup, line)
+		if err := app.HandleCommand(dup); err != nil {
+			internal.AppLog.Warnf("command dispatch: %v", err)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		internal.AppLog.Infof("stdin command reader stopped: %v", err)
+	} else {
+		internal.AppLog.Infof("stdin command reader: EOF (bridge closed the pipe)")
+	}
 }

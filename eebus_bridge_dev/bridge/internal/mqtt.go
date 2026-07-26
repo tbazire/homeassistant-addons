@@ -22,6 +22,17 @@ import (
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
+// MQTTMessage is the small surface of a paho message the rest of the bridge
+// needs. Declared as an interface so callers do not depend on paho types.
+type MQTTMessage interface {
+	Topic() string
+	Payload() []byte
+}
+
+// MessageHandler is the bridge-internal signature for inbound MQTT messages.
+// It decouples the orchestrator from paho's MessageHandler type.
+type MessageHandler func(MQTTMessage)
+
 // MQTTClient wraps paho's client with a connect-with-retry helper and an
 // idiomatic Go API. It deliberately hides paho's option sprawl behind sane
 // defaults (QoS 1, auto-reconnect, 10s connection timeout, LWT "offline").
@@ -30,7 +41,7 @@ type MQTTClient struct {
 	logger Logger
 
 	mu   sync.Mutex
-	subs map[string]pahomqtt.MessageHandler // active subscriptions
+	subs map[string]MessageHandler // active subscriptions, re-applied on reconnect
 }
 
 // MQTTOptions are the values the bridge actually needs to configure.
@@ -52,6 +63,15 @@ func NewMQTTClient(opts MQTTOptions, logger Logger) *MQTTClient {
 	}
 	broker := fmt.Sprintf("tcp://%s:%d", opts.Host, opts.Port)
 
+	// The *MQTTClient must exist before the OnConnect closure can reference it
+	// (the closure re-applies subscriptions held on the wrapper). We create
+	// the wrapper with a zeroed paho client, build the options referencing it,
+	// then bind the real paho client.
+	mc := &MQTTClient{
+		logger: logger,
+		subs:   make(map[string]MessageHandler),
+	}
+
 	pahoOpts := pahomqtt.NewClientOptions().
 		AddBroker(broker).
 		SetClientID(opts.ClientID).
@@ -66,6 +86,11 @@ func NewMQTTClient(opts MQTTOptions, logger Logger) *MQTTClient {
 			if opts.WillTopic != "" && opts.WillOnline != "" {
 				c.Publish(opts.WillTopic, 1, true, opts.WillOnline)
 			}
+			// Re-apply every active subscription. paho does NOT remember
+			// subscriptions across reconnects on its own when auto-reconnect
+			// is enabled, so a command_topic we subscribed to before a network
+			// blip would silently stop firing without this loop.
+			mc.resubscribeAll()
 		}).
 		SetConnectionLostHandler(func(c pahomqtt.Client, err error) {
 			logger.Warn("mqtt connection lost", "err", err.Error())
@@ -81,12 +106,47 @@ func NewMQTTClient(opts MQTTOptions, logger Logger) *MQTTClient {
 		pahoOpts.SetWill(opts.WillTopic, opts.WillOffline, 1, true)
 	}
 
-	return &MQTTClient{
-		client: pahomqtt.NewClient(pahoOpts),
-		logger: logger,
-		subs:   make(map[string]pahomqtt.MessageHandler),
+	mc.client = pahomqtt.NewClient(pahoOpts)
+	return mc
+}
+
+// resubscribeAll re-applies every registered subscription to the paho client.
+// Called from the OnConnect handler so command topics survive reconnects.
+func (c *MQTTClient) resubscribeAll() {
+	c.mu.Lock()
+	topics := make([]string, 0, len(c.subs))
+	for topic := range c.subs {
+		topics = append(topics, topic)
+	}
+	c.mu.Unlock()
+	for _, topic := range topics {
+		c.mu.Lock()
+		h := c.subs[topic]
+		c.mu.Unlock()
+		if h == nil {
+			continue
+		}
+		if tkn := c.client.Subscribe(topic, 1, adaptHandler(h)); tkn.WaitTimeout(5 * time.Second) {
+			if err := tkn.Error(); err != nil {
+				c.logger.Warn("mqtt re-subscribe failed", "topic", topic, "err", err.Error())
+			}
+		}
 	}
 }
+
+// adaptHandler converts a bridge-internal MessageHandler into the paho
+// MessageHandler signature, wrapping the paho message behind MQTTMessage.
+func adaptHandler(h MessageHandler) pahomqtt.MessageHandler {
+	return func(_ pahomqtt.Client, m pahomqtt.Message) {
+		h(pahoMessage{m})
+	}
+}
+
+// pahoMessage adapts a paho Message to the MQTTMessage interface.
+type pahoMessage struct{ pahomqtt.Message }
+
+func (m pahoMessage) Topic() string   { return m.Message.Topic() }
+func (m pahoMessage) Payload() []byte { return m.Message.Payload() }
 
 // Connect blocks until the broker is reachable or ctx is cancelled. paho's
 // own retry loop takes over for reconnections after the first connect.
@@ -119,14 +179,14 @@ func (c *MQTTClient) Publish(topic string, retained bool, payload []byte) error 
 	return token.Error()
 }
 
-// Subscribe registers a handler for a topic. Re-applied automatically by paho
-// on reconnect only if registered through this method (we track them so the
-// orchestrator can re-subscribe if needed).
-func (c *MQTTClient) Subscribe(topic string, handler pahomqtt.MessageHandler) error {
+// Subscribe registers a handler for a topic. The subscription is tracked so it
+// is automatically re-applied on reconnect (paho does not remember subs across
+// reconnects when auto-reconnect is enabled).
+func (c *MQTTClient) Subscribe(topic string, handler MessageHandler) error {
 	c.mu.Lock()
 	c.subs[topic] = handler
 	c.mu.Unlock()
-	token := c.client.Subscribe(topic, 1, handler)
+	token := c.client.Subscribe(topic, 1, adaptHandler(handler))
 	if !token.WaitTimeout(10 * time.Second) {
 		return fmt.Errorf("mqtt subscribe timeout: %s", topic)
 	}

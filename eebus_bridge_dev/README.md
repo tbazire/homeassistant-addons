@@ -86,6 +86,9 @@ add-on before starting this one (and vice-versa).
 | `eebusd.port` | port | `4711` | Local TCP port for inbound SHIP connections. |
 | `mqtt.prefix` | string | `eebus` | MQTT prefix for state topics. |
 | `mqtt.discovery_prefix` | string | `homeassistant` | HA MQTT discovery prefix. |
+| `write.enable` | bool | `false` | **Off by default.** When `true`, allows the add-on to send control commands to the device (e.g. schedule/pause a heat-pump compressor). See [Controlling devices](#controlling-devices-write-commands) below. |
+| `write.use_cases` | string | `"auto"` | `"auto"` activates every write use case the device supports, or a comma-separated list to restrict (e.g. `"ohpcf"`). |
+| `write.device_profile` | enum | `"auto"` | Restricts write discovery to a device family (`heatpump` / `evse` / `inverter` / `battery` / `generic`). `auto` trusts the device's own advertisement. |
 
 The MQTT broker is resolved automatically from the Home Assistant Supervisor
 (the Mosquitto add-on). You do not need to set a broker address unless you use
@@ -122,6 +125,35 @@ re-pair. Keep backups.
   ```
   cosign verify ghcr.io/tbazire/eebus-bridge-dev:0.1.0-dev
   ```
+
+## Controlling devices (write commands)
+
+By default this add-on is **read-only** (sensors only). Setting
+`write.enable: true` opens an opt-in control channel so Home Assistant can
+also **act** on the device.
+
+The add-on is **generic**: it activates the write use cases the *device
+itself* advertises over SPINE, not a hardcoded list. The first use case
+shipped is **OHPCF** (heat-pump compressor flexibility): on a compatible heat
+pump (e.g. a Saunier Duval/Vaillant VR920 exposing the
+`SmartEnergyManagementPs` feature), a `climate` entity appears whose modes
+(`off` = abort, `auto` = schedule) and presets (`pause`, `resume`) map to
+SPINE write commands.
+
+| Use case | Typical device | HA entity | Status |
+|----------|----------------|-----------|--------|
+| OHPCF | Heat pumps | `climate` (off/auto + pause/resume presets) | ✅ shipped |
+| LPC | Heat pumps, wallboxes, controllable loads | `number` (W limit) | 🚧 planned |
+| LPP | Inverters | `number` (W limit) | 🚧 planned |
+| OPEV / OSCEV | Wallboxes | `number` / `climate` | 🚧 planned |
+
+Adding a use case is a self-contained module — the bridge and dispatcher pick
+it up automatically, no code change required outside the module. See
+[`DOCS.md`](./DOCS.md#write-commands-control-entities) for the full write
+pipeline, the configuration knobs, and per-use-case details.
+
+> ⚠️ Enabling write commands turns the add-on into a controller. Enable it
+> only when you intend to control the device, and on a trusted network.
 
 ## Troubleshooting
 

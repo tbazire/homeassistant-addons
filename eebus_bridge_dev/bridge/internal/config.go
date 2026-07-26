@@ -47,6 +47,14 @@ type Config struct {
 	MQTTPrefix    string
 	MQTTDiscovery string
 
+	// Write commands (forwarded to eebusd). When Enable is true, the bridge
+	// passes -commands to eebusd, opens the stdin backchannel, subscribes to
+	// HA command topics, and routes inbound commands to eebusd. Default
+	// false: the add-on is read-only.
+	WriteEnable        bool
+	WriteUseCases      string // "auto" (default) or comma-separated list
+	WriteDeviceProfile string // "auto" (default) or heatpump|evse|inverter|battery|generic
+
 	// Process wiring (set by run.sh).
 	ScannerBin string // path to eebusd binary
 	DataDir    string // persistent dir for eebusd certs + ring buffer
@@ -56,24 +64,27 @@ type Config struct {
 // Returns an error if a required value is missing or malformed.
 func Load() (Config, error) {
 	cfg := Config{
-		LogLevel:      envDefault("EEBUS_LOG_LEVEL", "info"),
-		PollInterval:  envInt("EEBUS_POLL_INTERVAL", 60),
-		AutoAccept:    envBool("EEBUS_PAIRING_AUTO_ACCEPT", false),
-		RemoteSKI:     os.Getenv("EEBUS_PAIRING_REMOTE_SKI"),
-		Secret:        os.Getenv("EEBUS_PAIRING_SECRET"),
-		Brand:         envDefault("EEBUS_SCANNER_BRAND", "EEBusBridge"),
-		Model:         envDefault("EEBUS_SCANNER_MODEL", "Bridge-1"),
-		Serial:        envDefault("EEBUS_SCANNER_SERIAL", "bridge-0001"),
-		Vendor:        envDefault("EEBUS_SCANNER_VENDOR", "EBRG"),
-		Port:          envInt("EEBUS_SCANNER_PORT", 4711),
-		MQTTHost:      os.Getenv("EEBUS_MQTT_HOST"),
-		MQTTPort:      envInt("EEBUS_MQTT_PORT", 1883),
-		MQTTUser:      os.Getenv("EEBUS_MQTT_USER"),
-		MQTTPassword:  os.Getenv("EEBUS_MQTT_PASSWORD"),
-		MQTTPrefix:    envDefault("EEBUS_MQTT_PREFIX", "eebus"),
-		MQTTDiscovery: envDefault("EEBUS_MQTT_DISCOVERY", "homeassistant"),
-		ScannerBin:    envDefault("EEBUS_SCANNER_BIN", "/usr/local/bin/eebusd"),
-		DataDir:       envDefault("EEBUS_DATA_DIR", "/data/eebus"),
+		LogLevel:           envDefault("EEBUS_LOG_LEVEL", "info"),
+		PollInterval:       envInt("EEBUS_POLL_INTERVAL", 60),
+		AutoAccept:         envBool("EEBUS_PAIRING_AUTO_ACCEPT", false),
+		RemoteSKI:          os.Getenv("EEBUS_PAIRING_REMOTE_SKI"),
+		Secret:             os.Getenv("EEBUS_PAIRING_SECRET"),
+		Brand:              envDefault("EEBUS_SCANNER_BRAND", "EEBusBridge"),
+		Model:              envDefault("EEBUS_SCANNER_MODEL", "Bridge-1"),
+		Serial:             envDefault("EEBUS_SCANNER_SERIAL", "bridge-0001"),
+		Vendor:             envDefault("EEBUS_SCANNER_VENDOR", "EBRG"),
+		Port:               envInt("EEBUS_SCANNER_PORT", 4711),
+		MQTTHost:           os.Getenv("EEBUS_MQTT_HOST"),
+		MQTTPort:           envInt("EEBUS_MQTT_PORT", 1883),
+		MQTTUser:           os.Getenv("EEBUS_MQTT_USER"),
+		MQTTPassword:       os.Getenv("EEBUS_MQTT_PASSWORD"),
+		MQTTPrefix:         envDefault("EEBUS_MQTT_PREFIX", "eebus"),
+		MQTTDiscovery:      envDefault("EEBUS_MQTT_DISCOVERY", "homeassistant"),
+		WriteEnable:        envBool("EEBUS_WRITE_ENABLE", false),
+		WriteUseCases:      envDefault("EEBUS_WRITE_USE_CASES", "auto"),
+		WriteDeviceProfile: envDefault("EEBUS_WRITE_DEVICE_PROFILE", "auto"),
+		ScannerBin:         envDefault("EEBUS_SCANNER_BIN", "/usr/local/bin/eebusd"),
+		DataDir:            envDefault("EEBUS_DATA_DIR", "/data/eebus"),
 	}
 
 	if cfg.MQTTHost == "" {
@@ -115,6 +126,16 @@ func (c Config) Args() []string {
 	if c.Secret != "" {
 		args = append(args, "-secret", c.Secret)
 	}
+	if c.WriteEnable {
+		// Enable the write backchannel: eebusd reads NDJSON commands on stdin
+		// and registers its write use cases (OHPCF, …). The two advisory flags
+		// let the user restrict which use cases activate and hint the device
+		// profile so the discovery is filtered (useful when several devices
+		// are paired but only one should be driven).
+		args = append(args, "-commands")
+		args = append(args, "-write-usecases", c.WriteUseCases)
+		args = append(args, "-write-profile", c.WriteDeviceProfile)
+	}
 	return args
 }
 
@@ -129,24 +150,27 @@ func (c Config) Redacted() map[string]any {
 		return "<set>"
 	}
 	return map[string]any{
-		"log_level":     c.LogLevel,
-		"poll_interval": c.PollInterval,
-		"auto_accept":   c.AutoAccept,
-		"remote_ski":    c.RemoteSKI,
-		"secret":        mask(c.Secret),
-		"brand":         c.Brand,
-		"model":         c.Model,
-		"serial":        c.Serial,
-		"vendor":        c.Vendor,
-		"port":          c.Port,
-		"mqtt_host":     c.MQTTHost,
-		"mqtt_port":     c.MQTTPort,
-		"mqtt_user":     mask(c.MQTTUser),
-		"mqtt_password": mask(c.MQTTPassword),
-		"mqtt_prefix":   c.MQTTPrefix,
-		"discovery":     c.MQTTDiscovery,
-		"scanner_bin":   c.ScannerBin,
-		"data_dir":      c.DataDir,
+		"log_level":            c.LogLevel,
+		"poll_interval":        c.PollInterval,
+		"auto_accept":          c.AutoAccept,
+		"remote_ski":           c.RemoteSKI,
+		"secret":               mask(c.Secret),
+		"brand":                c.Brand,
+		"model":                c.Model,
+		"serial":               c.Serial,
+		"vendor":               c.Vendor,
+		"port":                 c.Port,
+		"mqtt_host":            c.MQTTHost,
+		"mqtt_port":            c.MQTTPort,
+		"mqtt_user":            mask(c.MQTTUser),
+		"mqtt_password":        mask(c.MQTTPassword),
+		"mqtt_prefix":          c.MQTTPrefix,
+		"discovery":            c.MQTTDiscovery,
+		"write_enable":         c.WriteEnable,
+		"write_use_cases":      c.WriteUseCases,
+		"write_device_profile": c.WriteDeviceProfile,
+		"scanner_bin":          c.ScannerBin,
+		"data_dir":             c.DataDir,
 	}
 }
 

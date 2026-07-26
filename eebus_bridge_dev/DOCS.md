@@ -115,6 +115,75 @@ device reconnect does not create duplicate sensors.
 | Measurements not updating | Set `poll_interval: 30`; check the device is online; check MQTT messages with `mosquitto_sub -t 'eebus/#' -v`. |
 | HA sensors missing | Confirm discovery messages: `mosquitto_sub -t 'homeassistant/sensor/eebus_bridge/#' -v`. |
 | Wrong device name in HA | The `manufacturer` kind provides brand/model. If missing, the device exposes no DeviceClassification server feature. |
+| Write command has no effect | `write.enable` must be `true`. Confirm the entity appears as a climate/number in HA and check the bridge log for `command result status=error`. The device may simply not support the requested action (e.g. a compressor that is not pausable). |
+
+## Write commands (control entities)
+
+By default the add-on is **read-only**: it publishes sensors but never sends
+anything to the device. Setting `write.enable: true` opens an opt-in control
+channel so Home Assistant can drive the device.
+
+> ⚠️ **Write commands are off by default.** This is deliberate: turning the
+> add-on into a controller changes its security profile (it can now act on the
+> physical world). Enable it only when you actually want to control the device
+> from HA, and on a trusted network.
+
+### How it works
+
+```
+HA UI ──► MQTT command_topic ──► eebus-bridge ──► stdin NDJSON ──► eebusd ──► SPINE write ──► device
+                                              ◄── command_result ◄──
+```
+
+1. `eebusd` registers its write use cases (OHPCF, …) on the local CEM entity
+   when `write.enable` is set.
+2. When a paired device announces support for one of them via SPINE, `eebusd`
+   emits a `controllable` NDJSON line to the bridge.
+3. The bridge creates the matching HA entity (a `climate` for OHPCF) and
+   subscribes to its `command_topic`s.
+4. When the user changes a mode/preset in HA, the bridge encodes the action as
+   a `command` NDJSON line and writes it to `eebusd`'s stdin.
+5. `eebusd` performs the SPINE write and reports the outcome as a
+   `command_result` line, which the bridge logs and publishes on
+   `<prefix>/bridge/command_result`.
+
+### Configuration
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `write.enable` | bool | `false` | Master switch. When `false`, no write use case is registered, no command topic is subscribed, and the add-on stays strictly read-only. |
+| `write.use_cases` | string | `"auto"` | `"auto"` activates every use case the device announces it supports. Set to a comma-separated list (e.g. `"ohpcf"`) to restrict to specific ones. |
+| `write.device_profile` | enum | `"auto"` | `auto` = trust the entity types the device advertises (recommended). `heatpump` / `evse` / `inverter` / `battery` / `generic` restrict discovery to that device family — useful when several devices are paired but only one should be controllable. |
+
+### Supported use cases
+
+| Use case | EEBUS name | Typical devices | HA entity | Actions |
+|----------|-----------|-----------------|-----------|---------|
+| **OHPCF** | Optimization of Self-Consumption by Heat-Pump Compressor Flexibility | Heat pumps (any brand exposing the `SmartEnergyManagementPs` feature: e.g. Saunier Duval/Vaillant VR920, …) | `climate` | modes `off` (abort) / `auto` (schedule); presets `pause` / `resume` |
+| LPC *(planned)* | Limitation of Power Consumption | Heat pumps, wallboxes, controllable loads | `number` | power limit in W |
+| LPP *(planned)* | Limitation of Power Production | Inverters | `number` | production limit in W |
+| OPEV / OSCEV *(planned)* | EV charging control | Wallboxes | `number` / `climate` | per-phase current obligation/recommendation |
+
+This list grows as new use case modules ship. Adding a use case is a
+self-contained module under `eebusd/internal/writes/<uc>/` that registers
+itself at init time — the bridge and dispatcher pick it up automatically, with
+no code change outside the module. **The add-on is generic**: it targets any
+EBUS-conformant device that advertises the use case, not a specific brand.
+
+### OHPCF example (heat pump)
+
+With `write.enable: true`, pairing a heat pump that exposes OHPCF produces a
+single `climate` entity per compatible compressor entity:
+
+- **Mode `off`** → abort the optional power consumption process.
+- **Mode `auto`** → schedule the process (start immediately).
+- **Preset `pause`** → pause the running compressor.
+- **Preset `resume`** → resume a paused compressor.
+
+The entity's `action` reflects the real compressor state (`heating`, `idle`,
+`off`). If the device rejects a command (e.g. the compressor is not pausable),
+the action does not change and the bridge log explains the reason under
+`command result status=error`.
 
 ## Security review
 

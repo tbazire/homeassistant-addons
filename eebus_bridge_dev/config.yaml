@@ -23,7 +23,7 @@
 #   https://developers.home-assistant.io/docs/add-ons/configuration
 
 name: EEBUS Bridge (Dev)
-version: "0.3.3-dev"
+version: "0.4.0-dev"
 slug: eebus_bridge_dev
 description: >-
   DEVELOPMENT channel of the EEBUS Bridge. Same code as the production
@@ -64,6 +64,10 @@ options:
   mqtt:
     prefix: "eebus"
     discovery_prefix: "homeassistant"
+  write:
+    enable: false
+    use_cases: "auto"
+    device_profile: "auto"
 schema:
   log_level: list(trace|debug|info|warning|error)
   poll_interval: int(1,86400)?
@@ -80,3 +84,7 @@ schema:
   mqtt:
     prefix: match(^[A-Za-z0-9_\-/]+$)
     discovery_prefix: str
+  write:
+    enable: bool
+    use_cases: match(^(auto|[a-z]+(,[a-z]+)*)$)
+    device_profile: list(auto|heatpump|evse|inverter|battery|generic)
