@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -62,12 +63,12 @@ func (o *Orchestrator) Run() error {
 	eebusd := NewSubprocess(o.cfg.ScannerBin, o.cfg.Args(), o.logger)
 
 	// onStdout is invoked once per (re)start of eebusd. Each call sets up a
-	// fresh parser and feeds events into the mapper/publisher.
+	// fresh parser and feeds events into the mapper/publisher/command-router.
 	onStdout := func(r io.Reader) {
 		parser := NewParser(r, o.logger)
 		go func() {
 			err := parser.Stream(func(ev Event) {
-				o.handleEvent(ev, mapper, mqtt)
+				o.handleEvent(ev, mapper, mqtt, eebusd)
 			})
 			if err != nil {
 				o.logger.Warn("ndjson parser ended", "err", err.Error())
@@ -112,8 +113,9 @@ func (o *Orchestrator) connectMQTT(ctx context.Context) (*MQTTClient, error) {
 	}
 }
 
-// handleEvent routes one parsed NDJSON event to discovery publishing.
-func (o *Orchestrator) handleEvent(ev Event, mapper *Mapper, mqtt *MQTTClient) {
+// handleEvent routes one parsed NDJSON event to discovery publishing and, for
+// write-channel events, to MQTT subscription / command routing.
+func (o *Orchestrator) handleEvent(ev Event, mapper *Mapper, mqtt *MQTTClient, eebusd *Subprocess) {
 	switch {
 	case ev.Manufacturer != nil:
 		// Update device registry. No MQTT publish here — the device block is
@@ -128,9 +130,42 @@ func (o *Orchestrator) handleEvent(ev Event, mapper *Mapper, mqtt *MQTTClient) {
 		}
 		o.publishState(mqtt, disc.StateTopic, disc.StateValue)
 
+	case ev.Controllable != nil:
+		// A remote entity just announced support for a write use case (OHPCF,
+		// …). Build the matching HA control entity and subscribe to its
+		// command topics so HA user actions flow back to eebusd.
+		disc := mapper.OnControllable(ev.Controllable)
+		if disc.Config != nil {
+			o.publishDiscovery(mqtt, disc)
+			// Initial state + action publish so HA does not show "unknown".
+			o.publishState(mqtt, disc.StateTopic, disc.StateValue)
+			if disc.ActionTopic != "" {
+				o.publishState(mqtt, disc.ActionTopic, disc.ActionValue)
+			}
+			// Subscribe to command topics. Use a closure capturing the
+			// controllable context so the inbound handler can build a Command
+			// and route it to eebusd's stdin.
+			c := ev.Controllable
+			for _, topic := range disc.CommandTopics {
+				cmdTopic := topic
+				o.subscribeCommand(mqtt, cmdTopic, c, eebusd)
+			}
+		}
+
+	case ev.CommandResult != nil:
+		// Outcome of a previously-dispatched command. Surface on the bridge
+		// status topic and log it; HA already reflects the new state via the
+		// next controllable/state line eebusd emits.
+		o.logger.Debug("command result", "op", ev.CommandResult.Op,
+			"status", ev.CommandResult.Status, "err", ev.CommandResult.Error)
+		statusTopic := fmt.Sprintf("%s/bridge/command_result", o.cfg.MQTTPrefix)
+		payload := fmt.Sprintf(`{"op":%q,"status":%q}`, ev.CommandResult.Op, ev.CommandResult.Status)
+		_ = mqtt.Publish(statusTopic, false, []byte(payload))
+
 	case ev.Configuration != nil:
-		// Configuration + diagnosis exposure will be expanded in the write
-		// jalot. For now, log at debug so the operator can see the flow.
+		// Configuration exposure (setpoints, nameplate values) is still
+		// read-only here. Write-side configuration will arrive with the LPC
+		// lot. Log at debug so the operator can see the flow.
 		o.logger.Debug("configuration event", "ski", ev.Configuration.SKI,
 			"key", ev.Configuration.KeyName, "value", ev.Configuration.Value)
 
@@ -142,6 +177,73 @@ func (o *Orchestrator) handleEvent(ev Event, mapper *Mapper, mqtt *MQTTClient) {
 		o.logger.Debug("diagnosis event", "ski", ev.Diagnosis.SKI,
 			"state", ev.Diagnosis.OperatingState)
 	}
+}
+
+// subscribeCommand registers an MQTT handler on cmdTopic that translates the
+// inbound HA payload into an NDJSON Command line and forwards it to eebusd's
+// stdin via WriteStdin. The controllable context (c) carries the SKI/entity/
+// use case needed to build the op.
+//
+// The topic suffix decides which action is requested: a "mode/cmd" topic
+// carrying "off" maps to <uc>.abort, "auto" to <uc>.schedule; a "preset/cmd"
+// topic carrying "pause"/"resume" maps to <uc>.pause/<uc>.resume.
+func (o *Orchestrator) subscribeCommand(mqtt *MQTTClient, cmdTopic string, c *Controllable, eebusd *Subprocess) {
+	handler := func(payload string) {
+		op, value, unit, ok := decodeHACommand(cmdTopic, payload, c)
+		if !ok {
+			o.logger.Warn("unhandled HA command", "topic", cmdTopic, "payload", payload)
+			return
+		}
+		cmd := Command{
+			Kind:   KindCommand,
+			Op:     op,
+			SKI:    c.SKI,
+			Entity: c.Entity,
+			Value:  value,
+			Unit:   unit,
+		}
+		line, err := json.Marshal(cmd)
+		if err != nil {
+			o.logger.Warn("encode command", "err", err.Error())
+			return
+		}
+		if err := eebusd.WriteStdin(string(line)); err != nil {
+			o.logger.Warn("write command to eebusd", "err", err.Error())
+		}
+	}
+	// paho delivers a pahomqtt.Message; wrap to extract the payload string.
+	if err := mqtt.Subscribe(cmdTopic, func(msg MQTTMessage) {
+		handler(string(msg.Payload()))
+	}); err != nil {
+		o.logger.Warn("subscribe command topic", "topic", cmdTopic, "err", err.Error())
+	}
+}
+
+// decodeHACommand maps an HA command_topic payload into a (op, value, unit)
+// triple for the NDJSON Command wire format. Returns ok=false for payloads we
+// do not know how to translate (the orchestrator logs and drops them).
+//
+// Routing is based on the topic suffix (mode/cmd vs preset/cmd) so the same
+// decoder works for any climate control entity regardless of the use case.
+func decodeHACommand(topic, payload string, c *Controllable) (op string, value float64, unit string, ok bool) {
+	p := strings.TrimSpace(strings.ToLower(payload))
+	switch {
+	case strings.HasSuffix(topic, "/mode/cmd"):
+		switch p {
+		case "off":
+			return c.UseCase + ".abort", 0, "", true
+		case "auto", "heat", "cool":
+			return c.UseCase + ".schedule", 0, "seconds", true
+		}
+	case strings.HasSuffix(topic, "/preset/cmd"):
+		switch p {
+		case "pause":
+			return c.UseCase + ".pause", 0, "", true
+		case "resume", "none", "":
+			return c.UseCase + ".resume", 0, "", true
+		}
+	}
+	return "", 0, "", false
 }
 
 // publishDiscovery emits the HA discovery config message (retained).

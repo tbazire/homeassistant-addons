@@ -2,11 +2,15 @@ package internal
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"sync"
 	"time"
 
 	"eebusd/internal/scanner"
+	"eebusd/internal/writes"
 	"github.com/enbility/eebus-go/api"
 	"github.com/enbility/eebus-go/service"
 	shipapi "github.com/enbility/ship-go/api"
@@ -31,6 +35,11 @@ type App struct {
 
 	service *service.Service
 	scanner *scanner.Scanner
+
+	// writesDispatcher routes inbound stdin commands to write use cases.
+	// nil when writes are disabled (the default). Set in Setup() when
+	// cfg.Commands is true.
+	writesDispatcher *writes.Dispatcher
 
 	// localSKI is our own SKI (derived from the certificate). Used to skip
 	// ourselves in auto-discovery.
@@ -137,6 +146,34 @@ func (a *App) Setup() error {
 		return fmt.Errorf("register use cases: %w", err)
 	}
 
+	// 7b. Optional write use cases. Only wired when -commands is active. The
+	//     concrete use cases (OHPCF, …) bind themselves to the local entity
+	//     via writes.BindAll, then are added to the service. The dispatcher
+	//     routes inbound stdin commands to them and emits command_result on
+	//     dataOut (stdout in -json mode). The shared event callback lets the
+	//     daemon emit a "controllable" line whenever a remote device announces
+	//     support for one of these use cases.
+	if a.cfg.Commands {
+		if err := writes.BindAll(localEntity, a.onWriteUseCaseEvent); err != nil {
+			return fmt.Errorf("bind write use cases: %w", err)
+		}
+		for _, uc := range writes.All() {
+			wuc := uc.UseCase()
+			if wuc == nil {
+				continue
+			}
+			if err := a.service.AddUseCase(wuc); err != nil {
+				return fmt.Errorf("add write usecase %s: %w", uc.Name(), err)
+			}
+		}
+		var dataOut io.Writer
+		if a.cfg.JSONOut {
+			dataOut = os.Stdout
+		}
+		a.writesDispatcher = writes.NewDispatcher(a, dataOut)
+		AppLog.Infof("write commands enabled: %d use case(s) registered (%v)", len(writes.Names()), writes.Names())
+	}
+
 	// 8. Generic feature-based scanner.
 	a.scanner = scanner.NewScanner(localEntity, scanner.Options{
 		JSONOut:      a.cfg.JSONOut,
@@ -207,6 +244,123 @@ func (a *App) Shutdown() {
 
 // Service exposes the underlying *service.Service (e.g. for QR/mDNS queries).
 func (a *App) Service() *service.Service { return a.service }
+
+// WritesEnabled reports whether write commands are accepted (i.e. -commands is
+// set and the dispatcher is wired). Main uses it to decide whether to start the
+// stdin reader goroutine.
+func (a *App) WritesEnabled() bool { return a.writesDispatcher != nil }
+
+// HandleCommand routes one raw stdin line (NDJSON command) to the write use
+// case dispatcher. Safe to call from the stdin reader goroutine. Returns nil
+// for empty / non-command lines; returns an error for synchronous dispatch
+// failures (the matching command_result line has already been emitted).
+//
+// If writes are disabled, this is a no-op returning nil.
+func (a *App) HandleCommand(raw []byte) error {
+	if a.writesDispatcher == nil {
+		return nil
+	}
+	return a.writesDispatcher.HandleLine(raw)
+}
+
+// EntityBySkiAndAddr resolves a (ski, entityAddress) pair into the matching
+// remote entity. Used by the write dispatcher to route a command to its
+// target. entityAddress is the dotted form ("3.1") matching entityAddrString.
+//
+// Returns an error if the remote device is unknown or no entity matches.
+func (a *App) EntityBySkiAndAddr(ski, addr string) (spineapi.EntityRemoteInterface, error) {
+	if a.service == nil {
+		return nil, fmt.Errorf("service not started")
+	}
+	rDevice := a.service.LocalDevice().RemoteDeviceForSki(ski)
+	if rDevice == nil {
+		return nil, fmt.Errorf("no remote device for ski %s", maskSKI(ski))
+	}
+	for _, entity := range rDevice.Entities() {
+		if entityAddrString(entity) == addr {
+			return entity, nil
+		}
+	}
+	return nil, fmt.Errorf("entity %s not found on ski %s", addr, maskSKI(ski))
+}
+
+// maskSKI keeps only the tail of a SKI for error/log messages. The SKI is a
+// public device identifier, but we keep only the suffix out of caution for
+// log-aggregation contexts.
+func maskSKI(ski string) string {
+	if len(ski) <= 8 {
+		return "…"
+	}
+	return "…" + ski[len(ski)-8:]
+}
+
+// onWriteUseCaseEvent is the shared callback wired into every write use case.
+// It is invoked when a remote device announces (or stops announcing) support
+// for one of the registered write use cases. We translate that into a
+// "controllable" NDJSON line so the bridge can create the matching HA entity.
+//
+// In text mode (no JSON output) we just log it: there is no consumer for the
+// JSON line.
+func (a *App) onWriteUseCaseEvent(ski string, entity spineapi.EntityRemoteInterface) {
+	if entity == nil || ski == "" {
+		return
+	}
+	// Identify which use cases are now compatible with this entity. The event
+	// itself does not carry the use case name (it is a generic callback), so
+	// we re-query the registry. Cheap (a handful of entries).
+	addr := entityAddrString(entity)
+	entType := string(entity.EntityType())
+	for _, uc := range writes.All() {
+		if !uc.IsCompatible(entity) {
+			continue
+		}
+		actions := uc.AvailableActions()
+		state := uc.EntityState(entity)
+		if a.cfg.JSONOut {
+			a.emitControllable(ski, addr, entType, uc.Name(), uc.HAComponent(), actions, state)
+		} else {
+			AppLog.Infof("controllable: ski=%s entity=%s usecase=%s actions=%v state=%s",
+				maskSKI(ski), addr, uc.Name(), actions, state)
+		}
+	}
+}
+
+// emitControllable writes one "controllable" NDJSON line on stdout. Used in
+// -json mode so the bridge can create the matching HA control entity.
+func (a *App) emitControllable(ski, addr, entityType, uc, component string, actions []string, state string) {
+	// Built here (not in the writes package) because the wire format belongs
+	// to the daemon's presentation layer, not the writes domain.
+	type controllableLine struct {
+		Kind       string   `json:"kind"`
+		SKI        string   `json:"ski"`
+		Entity     string   `json:"entity"`
+		EntityType string   `json:"entity_type,omitempty"`
+		UseCase    string   `json:"usecase"`
+		Component  string   `json:"component"`
+		Actions    []string `json:"actions"`
+		State      string   `json:"state,omitempty"`
+	}
+	if actions == nil {
+		actions = []string{}
+	}
+	line := controllableLine{
+		Kind:       "controllable",
+		SKI:        ski,
+		Entity:     addr,
+		EntityType: entityType,
+		UseCase:    uc,
+		Component:  component,
+		Actions:    actions,
+		State:      state,
+	}
+	payload, err := json.Marshal(line)
+	if err != nil {
+		AppLog.Warnf("emitControllable marshal: %v", err)
+		return
+	}
+	os.Stdout.Write(payload)
+	os.Stdout.Write([]byte("\n"))
+}
 
 // ============================================================================
 // api.ServiceReaderInterface implementation

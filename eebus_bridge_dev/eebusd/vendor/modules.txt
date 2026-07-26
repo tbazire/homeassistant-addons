@@ -6,6 +6,7 @@ github.com/enbility/eebus-go/features/internal
 github.com/enbility/eebus-go/features/server
 github.com/enbility/eebus-go/service
 github.com/enbility/eebus-go/usecases/api
+github.com/enbility/eebus-go/usecases/cem/ohpcf
 github.com/enbility/eebus-go/usecases/cem/vabd
 github.com/enbility/eebus-go/usecases/cem/vapd
 github.com/enbility/eebus-go/usecases/internal

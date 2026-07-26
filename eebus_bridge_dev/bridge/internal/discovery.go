@@ -45,13 +45,77 @@ type HASensor struct {
 	Device            *HADevice `json:"device,omitempty"`
 }
 
+// HAClimate is the discovery payload for a climate entity. Used by OHPCF to
+// expose heat-pump compressor scheduling (modes off/auto + presets pause/resume).
+// Mode/preset command topics receive the user's intent; state/action topics
+// carry the device's current state. All topics are absolute.
+type HAClimate struct {
+	Name                   string    `json:"name"`
+	UniqueID               string    `json:"unique_id"`
+	Modes                  []string  `json:"modes"`
+	ModeCommandTopic       string    `json:"mode_command_topic"`
+	ModeStateTopic         string    `json:"mode_state_topic"`
+	ActionTopic            string    `json:"action_topic,omitempty"`
+	PresetModes            []string  `json:"preset_modes,omitempty"`
+	PresetModeCommandTopic string    `json:"preset_mode_command_topic,omitempty"`
+	PresetModeStateTopic   string    `json:"preset_mode_state_topic,omitempty"`
+	Device                 *HADevice `json:"device,omitempty"`
+}
+
+// HANumber is the discovery payload for a number entity (setpoint/slider).
+// Reserved for future write use cases (LPC power limit, …).
+type HANumber struct {
+	Name              string    `json:"name"`
+	UniqueID          string    `json:"unique_id"`
+	CommandTopic      string    `json:"command_topic"`
+	StateTopic        string    `json:"state_topic"`
+	UnitOfMeasurement string    `json:"unit_of_measurement,omitempty"`
+	Min               *float64  `json:"min,omitempty"`
+	Max               *float64  `json:"max,omitempty"`
+	Step              *float64  `json:"step,omitempty"`
+	Device            *HADevice `json:"device,omitempty"`
+}
+
+// HASwitch is the discovery payload for a switch entity (binary on/off).
+// Reserved for future write use cases.
+type HASwitch struct {
+	Name         string    `json:"name"`
+	UniqueID     string    `json:"unique_id"`
+	CommandTopic string    `json:"command_topic"`
+	StateTopic   string    `json:"state_topic"`
+	PayloadOn    string    `json:"payload_on,omitempty"`
+	PayloadOff   string    `json:"payload_off,omitempty"`
+	Device       *HADevice `json:"device,omitempty"`
+}
+
+// HASelect is the discovery payload for a select entity (enum).
+// Reserved for future write use cases.
+type HASelect struct {
+	Name         string    `json:"name"`
+	UniqueID     string    `json:"unique_id"`
+	CommandTopic string    `json:"command_topic"`
+	StateTopic   string    `json:"state_topic"`
+	Options      []string  `json:"options"`
+	Device       *HADevice `json:"device,omitempty"`
+}
+
 // Discovery encodes the full set of topics + payloads needed to publish one
 // event: the discovery config (topic + payload) and the state (topic + value).
+//
+// Config is an opaque payload (one of *HASensor / *HAClimate / *HANumber /
+// *HASwitch / *HASelect) so the orchestrator can publish it without caring
+// about the concrete HA component type. CommandTopics lists the MQTT topics
+// the bridge must subscribe to in order to receive commands for this entity
+// (empty for sensors). The orchestrator re-applies subscriptions on MQTT
+// reconnect.
 type Discovery struct {
-	ConfigTopic string
-	Config      *HASensor
-	StateTopic  string
-	StateValue  string
+	ConfigTopic   string
+	Config        any
+	StateTopic    string
+	StateValue    string
+	ActionTopic   string   // optional, for climate action state
+	ActionValue   string   // optional initial action value
+	CommandTopics []string // topics to subscribe to (write entities only)
 }
 
 // Mapper turns EEBUS events into HA Discovery payloads. It is stateful: it
@@ -154,7 +218,122 @@ func (m *Mapper) OnMeasurement(me *Measurement) Discovery {
 	return disc
 }
 
-// ---- helpers ---------------------------------------------------------------
+// OnControllable maps a "controllable" event into a Discovery descriptor for
+// the matching HA control entity. The entity type is chosen by the use case
+// itself (carried in c.Component), so the bridge stays generic: when a new use
+// case ships (LPC → number, OPEV → number, …) this method picks it up without
+// changes as long as the component is one we model.
+//
+// For climate (OHPCF) it builds modes [off, auto] + presets [pause, resume] if
+// the use case exposes those actions. The initial mode/action/state are seeded
+// from c.State. CommandTopics lists every topic the bridge must subscribe to so
+// the orchestrator can route inbound HA commands back to eebusd.
+func (m *Mapper) OnControllable(c *Controllable) Discovery {
+	uid := uniqueID(c.SKI, c.Entity, c.UseCase)
+	disc := Discovery{}
+
+	// Already announced: refresh the state/action only (no discovery re-publish).
+	if m.announced[uid] {
+		if c.Component == "climate" {
+			disc.StateTopic = fmt.Sprintf("%s/%s/%s/%s/mode/state", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
+			disc.StateValue = climateModeFromHAAction(c.State)
+			disc.ActionTopic = fmt.Sprintf("%s/%s/%s/%s/action/state", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
+			disc.ActionValue = c.State
+		}
+		return disc
+	}
+
+	dev := m.devices[c.SKI]
+	if dev == nil {
+		// Controllable arrived before any manufacturer line: synthesise a
+		// minimal device block so the control entity attaches to something.
+		dev = &HADevice{
+			Identifiers: []string{c.SKI},
+			Name:        defaultDeviceName(c.SKI),
+		}
+		m.devices[c.SKI] = dev
+	}
+
+	// State is reused as both mode_state and action initial value (HA climate
+	// distinguishes them, but for OHPCF the same string suffices initially).
+	initial := c.State
+
+	switch c.Component {
+	case "climate":
+		disc.ConfigTopic = fmt.Sprintf("%s/climate/eebus_bridge/%s/config", m.discovery, uid)
+		modeState := fmt.Sprintf("%s/%s/%s/%s/mode/state", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
+		modeCmd := fmt.Sprintf("%s/%s/%s/%s/mode/cmd", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
+		actionTopic := fmt.Sprintf("%s/%s/%s/%s/action/state", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
+		presetState := fmt.Sprintf("%s/%s/%s/%s/preset/state", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
+		presetCmd := fmt.Sprintf("%s/%s/%s/%s/preset/cmd", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
+
+		presets := []string{}
+		hasPause := contains(c.Actions, "pause")
+		hasResume := contains(c.Actions, "resume")
+		if hasPause {
+			presets = append(presets, "pause")
+		}
+		if hasResume {
+			presets = append(presets, "resume")
+		}
+
+		climate := &HAClimate{
+			Name:                   climateName(c),
+			UniqueID:               uid,
+			Modes:                  []string{"off", "auto"},
+			ModeCommandTopic:       modeCmd,
+			ModeStateTopic:         modeState,
+			ActionTopic:            actionTopic,
+			PresetModes:            presets,
+			PresetModeCommandTopic: presetCmd,
+			PresetModeStateTopic:   presetState,
+			Device:                 dev,
+		}
+		disc.Config = climate
+		disc.StateTopic = modeState
+		disc.StateValue = climateModeFromHAAction(initial)
+		disc.ActionTopic = actionTopic
+		disc.ActionValue = initial
+		disc.CommandTopics = []string{modeCmd, presetCmd}
+	default:
+		// Unknown component: log via the empty discovery so the orchestrator
+		// skips publishing. New components (number/switch/select) will be
+		// wired here as their use cases ship.
+		return disc
+	}
+
+	m.announced[uid] = true
+	return disc
+}
+
+// climateName builds a human-readable name for a climate control entity.
+func climateName(c *Controllable) string {
+	if c.EntityType != "" {
+		return fmt.Sprintf("EEBUS %s control", c.EntityType)
+	}
+	return fmt.Sprintf("EEBUS control (%s)", c.UseCase)
+}
+
+// climateModeFromHAAction maps the initial HA action string back to the
+// climate mode for the mode_state topic. action "off" → mode "off"; anything
+// else → "auto" (the device is running, so we reflect the active mode).
+func climateModeFromHAAction(action string) string {
+	switch action {
+	case "off", "":
+		return "off"
+	default:
+		return "auto"
+	}
+}
+
+func contains(slice []string, s string) bool {
+	for _, x := range slice {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
 
 // uniqueID builds a stable HA unique_id for one measurement. SKI is long
 // (40 hex chars); we keep its tail (12 chars = enough disambiguation on a home

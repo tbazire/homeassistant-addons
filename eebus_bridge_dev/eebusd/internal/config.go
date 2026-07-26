@@ -39,6 +39,15 @@ type Config struct {
 	LogLevel string
 	JSONOut  bool // emit measurement data as JSON lines
 
+	// Write commands. When Commands is true, the daemon reads NDJSON command
+	// lines from stdin (one JSON object per line) and routes them to the
+	// registered write use cases. The bridge enables this when the user sets
+	// write.enable in the add-on config. Default false: the daemon is strictly
+	// read-only, no command surface.
+	Commands      bool
+	WriteUseCases string // "auto" (default) or explicit list, e.g. "ohpcf,lpc"
+	WriteProfile  string // "auto" (default) or heatpump|evse|inverter|battery|generic
+
 	// Data refresh
 	// PollInterval caps how often the scanner proactively re-issues SPINE read
 	// requests (RequestData/RequestDescriptions/...) per remote entity. Values
@@ -71,6 +80,12 @@ func (c *Config) RegisterFlags(fs *flag.FlagSet) {
 
 	fs.StringVar(&c.LogLevel, "loglevel", "info", "log level: trace|debug|info|error")
 	fs.BoolVar(&c.JSONOut, "json", false, "emit measurement data as JSON lines (machine-friendly)")
+
+	// Write commands. -commands turns on the stdin reader; -write-usecases and
+	// -write-profile are advisory filters the use case modules may consult.
+	fs.BoolVar(&c.Commands, "commands", false, "accept NDJSON command lines on stdin (enables write use cases)")
+	fs.StringVar(&c.WriteUseCases, "write-usecases", "auto", `comma-separated use cases to enable, or "auto"`)
+	fs.StringVar(&c.WriteProfile, "write-profile", "auto", "device profile hint: auto|heatpump|evse|inverter|battery|generic")
 
 	// PollInterval caps the proactive re-read cadence per remote entity.
 	// Notifications pushed by the device are always handled immediately; only
@@ -127,11 +142,13 @@ func (c *Config) String() string {
 		"port=%d brand=%s model=%s serial=%s vendor=%s\n"+
 			"certpath=%s keypath=%s certdir=%s\n"+
 			"remoteski=%s secret=%s autoaccept=%v heartbeat=%s\n"+
-			"loglevel=%s json=%v list=%v poll-interval=%s",
+			"loglevel=%s json=%v list=%v poll-interval=%s\n"+
+			"commands=%v write-usecases=%s write-profile=%s",
 		c.Port, c.Brand, c.Model, c.Serial, c.VendorCode,
 		c.CertPath, c.KeyPath, c.CertDir,
 		c.RemoteSKI, secret, c.AutoAccept, c.Heartbeat,
 		c.LogLevel, c.JSONOut, c.ListAll, c.PollInterval,
+		c.Commands, c.WriteUseCases, c.WriteProfile,
 	)
 }
 

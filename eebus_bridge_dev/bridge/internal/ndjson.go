@@ -22,14 +22,21 @@ import (
 	"strings"
 )
 
-// Kind constants mirror eebusd/internal/scanner/export.go. They are duplicated
-// on purpose: this module has zero import dependency on eebusd.
+// Kind constants mirror eebusd/internal/scanner/export.go and
+// eebusd/internal/writes/dispatch.go. They are duplicated on purpose: this
+// module has zero import dependency on eebusd.
 const (
 	KindDevice        = "device"
 	KindManufacturer  = "manufacturer"
 	KindConfiguration = "configuration"
 	KindMeasurement   = "measurement"
 	KindDiagnosis     = "diagnosis"
+	// Write-channel kinds (added in 0.4.0-dev). "command" is OUTBOUND
+	// (bridge → eebusd stdin); "controllable" and "command_result" are
+	// INBOUND (eebusd stdout → bridge). The parser handles the inbound ones.
+	KindCommand       = "command"
+	KindControllable  = "controllable"
+	KindCommandResult = "command_result"
 )
 
 // Line is the common envelope embedded by every typed payload.
@@ -88,6 +95,44 @@ type Diagnosis struct {
 	UpTime         string `json:"up_time,omitempty"`
 }
 
+// Controllable is an INBOUND line (eebusd → bridge) announcing that a remote
+// entity accepts one or more write actions for a given use case. The bridge
+// uses it to create the matching HA control entity (climate/number/switch/...).
+// Component is the HA discovery component to build ("climate", "number", …),
+// declared by the use case itself so the bridge stays agnostic.
+type Controllable struct {
+	Line
+	EntityType string   `json:"entity_type,omitempty"`
+	UseCase    string   `json:"usecase"`
+	Component  string   `json:"component"`
+	Actions    []string `json:"actions"`
+	State      string   `json:"state,omitempty"`
+}
+
+// CommandResult is an INBOUND line (eebusd → bridge) reporting the outcome of
+// a previously-dispatched command. MsgCounter is the SPINE message counter
+// (present on success), Error carries a short reason on failure. The bridge
+// logs it and may surface it on a diagnostic topic.
+type CommandResult struct {
+	Line
+	Op         string  `json:"op"`
+	Status     string  `json:"status"` // "ok" | "error"
+	MsgCounter *uint32 `json:"msg_counter,omitempty"`
+	Error      string  `json:"error,omitempty"`
+}
+
+// Command is an OUTBOUND line (bridge → eebusd stdin) requesting a write
+// operation. It is NOT part of the parser's Event union — it is serialized by
+// the bridge when an HA command is received, and written to eebusd's stdin.
+type Command struct {
+	Kind   string  `json:"kind"` // always "command"
+	Op     string  `json:"op"`   // "<uc>.<action>"
+	SKI    string  `json:"ski"`
+	Entity string  `json:"entity"`
+	Value  float64 `json:"value,omitempty"`
+	Unit   string  `json:"unit,omitempty"`
+}
+
 // Event is the discriminated union returned by the parser. Exactly one field
 // is non-nil per event. Consumers type-switch on it.
 type Event struct {
@@ -96,6 +141,8 @@ type Event struct {
 	Configuration *Configuration
 	Measurement   *Measurement
 	Diagnosis     *Diagnosis
+	Controllable  *Controllable
+	CommandResult *CommandResult
 }
 
 // Parser reads NDJSON lines from r and yields typed Events on the returned
@@ -208,6 +255,22 @@ func (p *Parser) parseLine(line string) (Event, bool) {
 			return Event{}, false
 		}
 		return Event{Diagnosis: &d}, true
+
+	case KindControllable:
+		var c Controllable
+		if err := json.Unmarshal([]byte(line), &c); err != nil {
+			p.logger.Warn("ndjson: bad controllable line", "err", err.Error())
+			return Event{}, false
+		}
+		return Event{Controllable: &c}, true
+
+	case KindCommandResult:
+		var cr CommandResult
+		if err := json.Unmarshal([]byte(line), &cr); err != nil {
+			p.logger.Warn("ndjson: bad command_result line", "err", err.Error())
+			return Event{}, false
+		}
+		return Event{CommandResult: &cr}, true
 
 	default:
 		p.logger.Debug("ndjson: unknown kind, ignoring", "kind", head.Kind)

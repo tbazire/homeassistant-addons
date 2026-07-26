@@ -72,12 +72,16 @@ func TestOnMeasurementFirstCallPublishesDiscovery(t *testing.T) {
 	if disc.ConfigTopic == "" || !strings.Contains(disc.ConfigTopic, "homeassistant/sensor/eebus_bridge/") {
 		t.Errorf("config topic wrong: %q", disc.ConfigTopic)
 	}
-	if disc.Config.UnitOfMeasurement != "W" || disc.Config.DeviceClass != "power" {
-		t.Errorf("unit/class wrong: unit=%q class=%q",
-			disc.Config.UnitOfMeasurement, disc.Config.DeviceClass)
+	cfg, ok := disc.Config.(*HASensor)
+	if !ok {
+		t.Fatalf("config payload is %T, want *HASensor", disc.Config)
 	}
-	if disc.Config.Device == nil || disc.Config.Device.Name != "Model" {
-		t.Errorf("device not attached: %+v", disc.Config.Device)
+	if cfg.UnitOfMeasurement != "W" || cfg.DeviceClass != "power" {
+		t.Errorf("unit/class wrong: unit=%q class=%q",
+			cfg.UnitOfMeasurement, cfg.DeviceClass)
+	}
+	if cfg.Device == nil || cfg.Device.Name != "Model" {
+		t.Errorf("device not attached: %+v", cfg.Device)
 	}
 	if disc.StateValue == "" || !strings.Contains(disc.StateValue, "1234") {
 		t.Errorf("state value wrong: %q", disc.StateValue)

@@ -78,6 +78,22 @@ main() {
     export EEBUS_MQTT_PREFIX="$(bashio::config 'mqtt.prefix')"
     export EEBUS_MQTT_DISCOVERY="$(bashio::config 'mqtt.discovery_prefix')"
 
+    # Write commands (optional, off by default). When enabled, the bridge
+    # opens the stdin backchannel to eebusd and subscribes to HA command
+    # topics so the user can drive the device (OHPCF schedule/pause/resume/
+    # abort for heat pumps, etc.). Warn loudly so a misconfiguration enabling
+    # writes by accident is visible in the add-on log.
+    if bashio::config.true 'write.enable'; then
+        export EEBUS_WRITE_ENABLE="true"
+        export EEBUS_WRITE_USE_CASES="$(bashio::config 'write.use_cases')"
+        export EEBUS_WRITE_DEVICE_PROFILE="$(bashio::config 'write.device_profile')"
+        bashio::log.warning "write commands ENABLED — the add-on can now control the device (profile=$(bashio::config 'write.device_profile'), use_cases=$(bashio::config 'write.use_cases'))"
+    else
+        export EEBUS_WRITE_ENABLE="false"
+        export EEBUS_WRITE_USE_CASES="auto"
+        export EEBUS_WRITE_DEVICE_PROFILE="auto"
+    fi
+
     # 4. Exec the bridge. s6-overlay now supervises it; SIGTERM propagates.
     bashio::log.info "launching eebus-bridge (broker=${mqtt_host}:${mqtt_port})"
     exec /usr/local/bin/eebus-bridge
