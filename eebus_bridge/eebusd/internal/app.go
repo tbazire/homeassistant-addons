@@ -369,8 +369,20 @@ func stateString(s shipapi.ConnectionState) string {
 //   - DataChange           → the remote pushed new values; the use case
 //     callbacks handle the bulk of this, but we log it.
 func (a *App) HandleEvent(payload spineapi.EventPayload) {
-	AppLog.Debugf("HandleEvent: type=%v change=%v ski=%s function=%v entity=%v",
-		payload.EventType, payload.ChangeType, payload.Ski, payload.Function, payload.Entity != nil)
+	// Include the entity address and type (when available) so each DataChange
+	// event can be attributed to a specific remote entity. The previous log only
+	// printed entity=<bool>, which hid WHICH entity a measurementListData
+	// arrived on — critical for diagnosing "missing metrics" cases.
+	entityAddr := "-"
+	entityType := "-"
+	if payload.Entity != nil {
+		entityAddr = entityAddrString(payload.Entity)
+		if t := payload.Entity.EntityType(); t != "" {
+			entityType = string(t)
+		}
+	}
+	AppLog.Debugf("HandleEvent: type=%v change=%v ski=%s function=%v entity=%s type=%s",
+		payload.EventType, payload.ChangeType, payload.Ski, payload.Function, entityAddr, entityType)
 	switch payload.EventType {
 	case spineapi.EventTypeEntityChange:
 		switch payload.ChangeType {

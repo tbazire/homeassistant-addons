@@ -200,6 +200,14 @@ type MeasurementCommonInterface interface {
 	// Will return nil if no data is available
 	GetDataForFilter(filter model.MeasurementDescriptionDataType) (
 		[]model.MeasurementDataType, error)
+
+	// Get all measurement values present in the cache, regardless of whether
+	// descriptions have arrived yet. Use this to enumerate values that may have
+	// been pushed by the device before (or without) their descriptions, which
+	// GetDataForFilter would silently drop.
+	//
+	// Returns nil if no measurement data is cached.
+	GetRawData() []model.MeasurementDataType
 }
 
 // Common interface for IdentificationClientInterface and IdentificationServerInterface

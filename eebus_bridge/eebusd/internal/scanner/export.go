@@ -92,13 +92,19 @@ type configurationLine struct {
 
 type measurementLine struct {
 	envelope
-	ID        string  `json:"id"`
-	Type      string  `json:"type,omitempty"`
-	Commodity string  `json:"commodity,omitempty"`
-	Scope     string  `json:"scope,omitempty"`
-	Unit      string  `json:"unit,omitempty"`
-	Value     float64 `json:"value,omitempty"`
-	Scale     int     `json:"scale,omitempty"`
+	ID        string `json:"id"`
+	Type      string `json:"type,omitempty"`
+	Commodity string `json:"commodity,omitempty"`
+	Scope     string `json:"scope,omitempty"`
+	Unit      string `json:"unit,omitempty"`
+	// Value is ALWAYS present on emitted lines: data without a real value is
+	// skipped upstream (see renderMeasurementsJSON), so a line reaching the wire
+	// always carries a concrete number — including a legitimate 0 (a power of
+	// 0W on an idle heat pump is a real measurement, not "no data"). We must
+	// NOT use omitempty here, otherwise 0 would be silently dropped and the
+	// bridge would treat the line as "missing value" and discard it.
+	Value float64 `json:"value"`
+	Scale int     `json:"scale,omitempty"`
 }
 
 type diagnosisLine struct {
@@ -217,7 +223,7 @@ func (s *Scanner) renderConfigurationJSON(env envelope, dc *client.DeviceConfigu
 func (s *Scanner) renderMeasurementsJSON(env envelope, m *client.Measurement) {
 	descs, err := m.GetDescriptionsForFilter(model.MeasurementDescriptionDataType{})
 	if err != nil {
-		return
+		descs = nil
 	}
 	descByID := make(map[model.MeasurementIdType]model.MeasurementDescriptionDataType, len(descs))
 	for _, d := range descs {
@@ -225,12 +231,38 @@ func (s *Scanner) renderMeasurementsJSON(env envelope, m *client.Measurement) {
 			descByID[*d.MeasurementId] = d
 		}
 	}
-	data, _ := m.GetDataForFilter(model.MeasurementDescriptionDataType{})
+
+	// Read raw measurement values DIRECTLY from the SPINE cache, bypassing
+	// GetDataForFilter (which bails with ErrDataNotAvailable when the
+	// description list is empty and would therefore mask legitimate values
+	// pushed by the device via a subscription). GetRawData returns every
+	// MeasurementData entry present, even without a matching description —
+	// which is exactly what a "scan everything" client must do.
+	data := m.GetRawData()
+
+	logDebugf("renderMeasurementsJSON: %d descriptions, %d values", len(descs), len(data))
+	// Log each description's type/scope/unit so the operator can see exactly
+	// what the device declares it exposes — even for measurements that have no
+	// value yet, or that we are not rendering for some reason. This is the key
+	// diagnostic for "the app shows X but the bridge does not" reports: it
+	// tells us whether the device DECLARES the measurement over SPINE at all.
+	for _, d := range descs {
+		logDebugf("  desc id=%s %s", idStr(d.MeasurementId), describeDescription(d))
+	}
+
 	for _, d := range data {
+		// Skip entries without a real value: a nil Value pointer means "no
+		// measurement yet", which must not be rendered as 0 (it would be
+		// misinterpreted as a real zero by HA). Only entries that actually
+		// carry a ScaledNumber value are emitted.
+		if d.Value == nil {
+			continue
+		}
 		desc := descByID[*d.MeasurementId]
 		line := measurementLine{
 			envelope: env.withKind(kindMeasurement),
 			ID:       idStr(d.MeasurementId),
+			Value:    d.Value.GetValue(),
 		}
 		if desc.MeasurementType != nil {
 			line.Type = string(*desc.MeasurementType)
@@ -244,11 +276,8 @@ func (s *Scanner) renderMeasurementsJSON(env envelope, m *client.Measurement) {
 		if desc.Unit != nil {
 			line.Unit = normalizeUnit(string(*desc.Unit))
 		}
-		if d.Value != nil {
-			line.Value = d.Value.GetValue()
-			if d.Value.Scale != nil {
-				line.Scale = int(*d.Value.Scale)
-			}
+		if d.Value.Scale != nil {
+			line.Scale = int(*d.Value.Scale)
 		}
 		s.writeJSON(line)
 	}
@@ -375,19 +404,28 @@ func (s *Scanner) printDeviceDiagnosis(addr string, dd *client.DeviceDiagnosis) 
 }
 
 // printMeasurements renders the current measurement cache as a text table.
+//
+// Like renderMeasurementsJSON, this reads values directly via GetRawData so
+// that measurements pushed by the device without a matching description are
+// still shown (they previously were dropped silently when descriptions were
+// empty or had not arrived yet).
 func (s *Scanner) printMeasurements(addr string, m *client.Measurement) {
 	descs, err := m.GetDescriptionsForFilter(model.MeasurementDescriptionDataType{})
-	if err != nil || len(descs) == 0 {
-		return
-	}
-	descByID := make(map[model.MeasurementIdType]model.MeasurementDescriptionDataType, len(descs))
-	for _, d := range descs {
-		if d.MeasurementId != nil {
-			descByID[*d.MeasurementId] = d
+	descByID := make(map[model.MeasurementIdType]model.MeasurementDescriptionDataType)
+	if err == nil {
+		for _, d := range descs {
+			if d.MeasurementId != nil {
+				descByID[*d.MeasurementId] = d
+			}
 		}
 	}
-	data, _ := m.GetDataForFilter(model.MeasurementDescriptionDataType{})
+	data := m.GetRawData()
 	if len(data) == 0 {
+		if len(descs) == 0 {
+			return // nothing to show at all
+		}
+		// Descriptions present but no values yet: show the descriptor labels so
+		// the operator can still see what the device exposes.
 		logInfof("  [%s] measurements: %d descriptors, no values yet:", addr, len(descs))
 		for _, d := range descs {
 			logInfof("    id=%s %s", idStr(d.MeasurementId), describeDescription(d))
