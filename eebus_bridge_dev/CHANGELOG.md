@@ -23,6 +23,31 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.3.3-dev] - 2026-07-26
+
+### Fixed
+- **SHIP transport logs no longer pollute the NDJSON stream in `-json` mode.**
+  Since the first release, `eebus-bridge` has been emitting `WARN ndjson:
+  skipping unparseable line` on lines like `DEBUG Send: d:_i:...` and
+  `DEBUG Recv: d:_i:...`. These are raw SHIP/WebSocket frame dumps produced by
+  `ship-go` (`websocket.go` `Trace("Send:"/"Recv:", ski, text)`) via the logger
+  passed to `service.SetLogging`.
+  The bug: that logger was created with `internal.NewLogger(logLevel)` which
+  defaults to `os.Stdout`, and was never redirected to stderr — unlike `AppLog`
+  and the scanner's `logOut`, which both honor `-json` mode. In `-json` mode,
+  stdout is reserved for the NDJSON data stream consumed by the bridge, so any
+  non-JSON line on it triggers the warning.
+  The fix is a one-line `logger.SetWriter(logWriter)` in `main.go` (same
+  destination already used by `AppLog` and `scanner.logOut`). No behavior
+  change, no data loss: the bridge was already filtering these lines correctly,
+  this just stops emitting them on the wrong stream in the first place.
+
+### Notes
+- This also closes a minor information-disclosure vector: the `Send:`/`Recv:`
+  traces dump the SKI and raw message fragments, which should not land in the
+  captured add-on log stream even when harmless. Now they go to stderr
+  alongside all other diagnostic output.
+
 ## [0.3.2-dev] - 2026-07-26
 
 ### Fixed
@@ -167,7 +192,8 @@ _Nothing yet._
 - The code source is intentionally kept identical to the production add-on
   at fork time. Future dev-only changes will be listed here.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.3.2...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.3.3...HEAD
+[0.3.3-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.3.3
 [0.3.2-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.3.2
 [0.3.1-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.3.1
 [0.3.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.3.0
