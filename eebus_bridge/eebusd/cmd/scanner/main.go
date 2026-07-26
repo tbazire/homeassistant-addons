@@ -52,7 +52,13 @@ func main() {
 	internal.AppLog.Infof("eebus-scanner starting")
 	internal.AppLog.Infof("configuration:\n%s", cfg.String())
 
+	// The SHIP/SPINE logger (wired into service.SetLogging) writes raw transport
+	// frames via logging.Log().Trace("Send:"/"Recv:", ski, ...). NewLogger
+	// defaults to os.Stdout, which in -json mode would interleave with the
+	// NDJSON stream and break the bridge parser. Redirect it to the same
+	// destination as the other loggers so stdout stays data-only.
 	logger := internal.NewLogger(logLevel)
+	logger.SetWriter(logWriter)
 
 	app := internal.NewApp(cfg, logger)
 	if err := app.Setup(); err != nil {

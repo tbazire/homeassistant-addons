@@ -75,14 +75,22 @@ func TestMeasurementLineSerialization(t *testing.T) {
 	}
 }
 
-func TestMeasurementLineOmitempty(t *testing.T) {
-	// A measurement with no value must omit value/scale/type/etc.
+func TestMeasurementLineAlwaysCarriesValue(t *testing.T) {
+	// A measurementLine always carries "value": it is emitted only when a real
+	// measurement exists, so "value":0 is legitimate and MUST be serialized.
+	// (Previously omitempty dropped it, which made the bridge believe the
+	// value was missing and discard the whole line — see fix for VR920.)
 	line := measurementLine{
 		envelope: envelope{Kind: kindMeasurement, SKI: "s", Entity: "0", Time: "t"},
 		ID:       "1",
+		Value:    0,
 	}
 	got := mustMarshal(t, line)
-	for _, unwanted := range []string{`"value"`, `"scale"`, `"type"`, `"unit"`} {
+	if !strings.Contains(got, `"value":0`) {
+		t.Errorf("zero value must be serialized, got %s", got)
+	}
+	// Optional metadata fields stay omitempty.
+	for _, unwanted := range []string{`"scale"`, `"type"`, `"unit"`} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("unexpected %q in %s", unwanted, got)
 		}
