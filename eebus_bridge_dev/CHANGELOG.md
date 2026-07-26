@@ -23,6 +23,33 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.3.2-dev] - 2026-07-26
+
+### Fixed
+- **Backfill measurement values the broad read does not return.** Diagnostic
+  logs from the Saunier Duval VR920 revealed the real culprit behind the
+  "missing metrics": the device declares 16 measurements on its
+  HeatPumpAppliance entity, but a broad `RequestData(nil, nil)` only returns
+  ONE value (the last one that changed). The other 15 declared measurements
+  were therefore never cached and never published, even though the device
+  genuinely exposes them over SPINE.
+  The fix adds `backfillMissingMeasurements`: after the broad read, the
+  scanner iterates over the declared descriptions and, for every
+  `MeasurementId` whose value is NOT already in the cache, issues a targeted
+  `RequestData` with a selector pinned to that id. Each missing id is
+  requested at most once per poll cycle (no retry storm). Responses arrive
+  asynchronously via `DataChange` events and are rendered by the existing
+  `RenderEntityData` path (no amplification loop: DataChange never re-pulls).
+  Cheap when the broad read already returned everything (no missing ids =>
+  no extra requests); necessary when it did not.
+
+### Notes
+- Debug log line added: `entity X: backfilled N missing measurement ids (of M
+  declared)` so the operator can confirm the backfill is running and how many
+  ids it had to chase.
+- `0.3.1-dev` diagnostic logging (`HandleEvent` entity addr+type, description
+  list dump) is retained — keep `log_level: debug` if you want to verify.
+
 ## [0.3.1-dev] - 2026-07-26
 
 ### Added
@@ -140,7 +167,8 @@ _Nothing yet._
 - The code source is intentionally kept identical to the production add-on
   at fork time. Future dev-only changes will be listed here.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.3.1...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.3.2...HEAD
+[0.3.2-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.3.2
 [0.3.1-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.3.1
 [0.3.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.3.0
 [0.2.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.2.0

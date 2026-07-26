@@ -286,10 +286,24 @@ func (s *Scanner) pullEntityData(addr string, entity spineapi.EntityRemoteInterf
 			_, err := m.Subscribe()
 			return err
 		})
+		// Broad read first: ask for every measurement value at once (selector
+		// nil). Most devices reply with the full set; some (e.g. the Saunier
+		// Duval VR920) reply with only a subset — typically the last value
+		// that changed — and need a per-id read to surface the rest.
 		tryRequest("RequestData", func() error {
 			_, err := m.RequestData(nil, nil)
 			return err
 		})
+		// Per-id backfill: for each declared measurement whose value is NOT
+		// already in the cache, issue a targeted RequestData with a selector
+		// on that MeasurementId. This is what recovers the values that the
+		// broad read did not return. Cheap when the broad read already got
+		// everything (no missing ids => no extra requests); necessary when it
+		// did not. Each missing id is requested at most once per poll cycle;
+		// the result arrives asynchronously via a DataChange event and is
+		// rendered by RenderEntityData (no amplification loop: we do NOT
+		// re-pull on DataChange).
+		s.backfillMissingMeasurements(addr, m, tracker, tryRequest)
 	}
 
 	// 4. Device diagnosis — created lazily.
@@ -298,6 +312,69 @@ func (s *Scanner) pullEntityData(addr string, entity spineapi.EntityRemoteInterf
 			_, err := dd.RequestState()
 			return err
 		})
+	}
+}
+
+// backfillMissingMeasurements issues a targeted RequestData for each declared
+// measurement whose value is NOT already in the cache.
+//
+// Some EEBUS devices (observed on the Saunier Duval VR920) reply to a broad
+// RequestData(nil, nil) with only a SUBSET of the declared measurements —
+// typically the last value that changed — even though their
+// MeasurementDescriptionListData declares many more. The broad read alone
+// therefore hides measurements the device genuinely exposes. This function
+// closes that gap by requesting each missing id individually.
+//
+// Behavior:
+//   - Reads the current descriptions and the current cached values.
+//   - For every (declared) MeasurementId absent from the cached values, issues
+//     RequestData with a selector pinned to that id.
+//   - Each missing id is requested at most once per poll cycle (no retry storm).
+//   - The response arrives asynchronously as a DataChange event, which the
+//     App event handler routes to RenderEntityData (cache-only, no re-pull).
+//
+// Cheap when the broad read already returned everything (no missing ids =>
+// no extra requests); necessary when it did not.
+func (s *Scanner) backfillMissingMeasurements(
+	addr string,
+	m *client.Measurement,
+	tracker *remoteTracker,
+	tryRequest func(functionName string, do func() error),
+) {
+	descs, err := m.GetDescriptionsForFilter(model.MeasurementDescriptionDataType{})
+	if err != nil {
+		return
+	}
+	// Build the set of ids that already have a cached value, so we only
+	// request the ones we are missing.
+	present := make(map[model.MeasurementIdType]struct{})
+	for _, d := range m.GetRawData() {
+		if d.MeasurementId != nil {
+			present[*d.MeasurementId] = struct{}{}
+		}
+	}
+
+	missing := 0
+	for _, d := range descs {
+		if d.MeasurementId == nil {
+			continue
+		}
+		if _, ok := present[*d.MeasurementId]; ok {
+			continue
+		}
+		id := *d.MeasurementId
+		selector := &model.MeasurementListDataSelectorsType{
+			MeasurementId: &id,
+		}
+		tryRequest("RequestDataById", func() error {
+			_, err := m.RequestData(selector, nil)
+			return err
+		})
+		missing++
+	}
+	if missing > 0 {
+		logDebugf("entity %s: backfilled %d missing measurement ids (of %d declared)",
+			addr, missing, len(descs))
 	}
 }
 
