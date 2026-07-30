@@ -56,7 +56,7 @@ type ResultCB func(status ResultStatus, msgCounter *uint32, errStr string)
 // WriteUseCase is the contract every write use case module must satisfy.
 //
 // The methods fall in three groups:
-//  1. Metadata: Name / HAComponent / AvailableActions — declared up-front so
+//  1. Metadata: Name / HAComponent / AvailableActionsForEntity — declared up-front so
 //     the bridge can build the right HA entity type and advertise actions.
 //  2. Compatibility: IsCompatible — asked per remote entity to decide whether
 //     this use case applies (typically: the entity advertises matching SPINE
@@ -80,10 +80,17 @@ type WriteUseCase interface {
 	// the bridge stays agnostic of the physical quantity being controlled.
 	HAUnit() string
 
-	// AvailableActions lists the action verbs this use case accepts in Dispatch
-	// (e.g. ["schedule","pause","resume","abort"]). They are appended to Name
-	// to form the op ("ohpcf.pause"). The order is the suggested display order.
-	AvailableActions() []string
+	// AvailableActionsForEntity lists the action verbs this use case accepts in
+	// Dispatch for the given entity (e.g. ["schedule","pause","resume","abort"]).
+	// They are appended to Name to form the op ("ohpcf.pause"). The order is the
+	// suggested display order.
+	//
+	// The list is entity-specific: a use case SHOULD filter out actions the
+	// entity does not actually support (e.g. omit "pause" when the device
+	// advertises isPausable=false) so the bridge only exposes controls that can
+	// succeed. When the per-entity capability is not (yet) known, return the
+	// full static list as a safe default.
+	AvailableActionsForEntity(entity spineapi.EntityRemoteInterface) []string
 
 	// IsCompatible reports whether a given remote entity can be driven by this
 	// use case. Typically delegates to AvailableScenariosForEntity != empty.

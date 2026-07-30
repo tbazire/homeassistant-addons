@@ -65,8 +65,11 @@ func (m *Module) HAComponent() string { return haComponent }
 // HAUnit returns the Home Assistant unit of measurement for the limit value.
 func (m *Module) HAUnit() string { return haUnit }
 
-// AvailableActions lists the LPC actions exposed to the bridge.
-func (m *Module) AvailableActions() []string {
+// AvailableActionsForEntity lists the LPC actions the given entity supports.
+// LPC has no per-entity capability flags (any entity advertising the LPC
+// scenarios accepts setting and clearing a consumption limit), so the static
+// list is returned regardless of the entity.
+func (m *Module) AvailableActionsForEntity(spineapi.EntityRemoteInterface) []string {
 	return []string{"set", "clear"}
 }
 

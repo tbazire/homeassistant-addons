@@ -26,11 +26,13 @@ func TestModuleNameAndComponent(t *testing.T) {
 }
 
 func TestModuleActions(t *testing.T) {
+	// Before Bind (m.impl == nil) AvailableActionsForEntity falls back to the
+	// full static list so discovery is never blocked while wiring completes.
 	m := &Module{}
-	actions := m.AvailableActions()
+	actions := m.AvailableActionsForEntity(nil)
 	want := map[string]bool{"schedule": true, "pause": true, "resume": true, "abort": true}
 	if len(actions) != len(want) {
-		t.Fatalf("AvailableActions = %v, want %d entries", actions, len(want))
+		t.Fatalf("AvailableActionsForEntity = %v, want %d entries", actions, len(want))
 	}
 	for _, a := range actions {
 		if !want[a] {

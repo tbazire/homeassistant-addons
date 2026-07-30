@@ -25,10 +25,12 @@ type fakeUseCase struct {
 	gotCB    bool
 }
 
-func (f *fakeUseCase) Name() string                                      { return f.name }
-func (f *fakeUseCase) HAComponent() string                               { return f.comp }
-func (f *fakeUseCase) HAUnit() string                                    { return "" }
-func (f *fakeUseCase) AvailableActions() []string                        { return f.actions }
+func (f *fakeUseCase) Name() string        { return f.name }
+func (f *fakeUseCase) HAComponent() string { return f.comp }
+func (f *fakeUseCase) HAUnit() string      { return "" }
+func (f *fakeUseCase) AvailableActionsForEntity(spineapi.EntityRemoteInterface) []string {
+	return f.actions
+}
 func (f *fakeUseCase) IsCompatible(spineapi.EntityRemoteInterface) bool  { return f.compat }
 func (f *fakeUseCase) EntityState(spineapi.EntityRemoteInterface) string { return f.state }
 func (f *fakeUseCase) UseCase() api.UseCaseInterface                     { return nil }
