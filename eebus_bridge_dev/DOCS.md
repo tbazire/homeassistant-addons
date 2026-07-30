@@ -185,6 +185,24 @@ The entity's `action` reflects the real compressor state (`heating`, `idle`,
 the action does not change and the bridge log explains the reason under
 `command result status=error`.
 
+In addition to the `climate` control entity, OHPCF exposes **read-only sensors**
+from the data the compressor advertises. They attach to the same device and
+entity as the `climate` entity, so the whole picture is grouped together:
+
+| Sensor | HA type | Meaning |
+|--------|---------|---------|
+| `requested_power` | `sensor` (power, W) | Power the process estimates it will consume |
+| `max_power` | `sensor` (power, W) | Maximal power value |
+| `start_time` | `sensor` (timestamp) | When the scheduled process starts |
+| `min_run_duration` | `sensor` (duration, min) | Minimum time a run must last |
+| `min_pause_duration` | `sensor` (duration, min) | Minimum time a pause must last |
+| `is_pausable` | `binary_sensor` | Whether the CEM may pause the process |
+| `is_stoppable` | `binary_sensor` | Whether the CEM may abort the process |
+
+These are informational (no command surface). `is_pausable`/`is_stoppable` also
+drive which presets the `climate` entity offers (see the per-entity action
+filtering introduced in 0.5.1-dev).
+
 ### LPC example (power consumption limit)
 
 With `write.enable: true`, pairing any controllable system that exposes LPC

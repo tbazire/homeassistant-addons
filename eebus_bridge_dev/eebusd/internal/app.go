@@ -11,6 +11,7 @@ import (
 
 	"eebusd/internal/scanner"
 	"eebusd/internal/writes"
+	"eebusd/internal/writes/wucapi"
 	"github.com/enbility/eebus-go/api"
 	"github.com/enbility/eebus-go/service"
 	shipapi "github.com/enbility/ship-go/api"
@@ -154,7 +155,10 @@ func (a *App) Setup() error {
 	//     daemon emit a "controllable" line whenever a remote device announces
 	//     support for one of these use cases.
 	if a.cfg.Commands {
-		if err := writes.BindAll(localEntity, a.onWriteUseCaseEvent); err != nil {
+		if err := writes.BindAll(localEntity, wucapi.Callbacks{
+			Event:  a.onWriteUseCaseEvent,
+			Signal: a.onWriteUseCaseSignal,
+		}); err != nil {
 			return fmt.Errorf("bind write use cases: %w", err)
 		}
 		for _, uc := range writes.All() {
@@ -322,7 +326,87 @@ func (a *App) onWriteUseCaseEvent(ski string, entity spineapi.EntityRemoteInterf
 			AppLog.Infof("controllable: ski=%s entity=%s usecase=%s actions=%v state=%s",
 				maskSKI(ski), addr, uc.Name(), actions, state)
 		}
+		// Push an initial snapshot of the use case's read signals so the bridge
+		// does not show "unknown" sensors while waiting for the first device
+		// notification. No-op for use cases without read signals. The module's
+		// Signal callback (wired in BindAll) tags each signal with "<uc>:".
+		if a.cfg.JSONOut {
+			uc.EmitSignals(ski, entity)
+		}
 	}
+}
+
+// onWriteUseCaseSignal is the shared callback wired into every write use case
+// for per-entity read-signal updates. The bound Signal callback tags each
+// signal as "<uc>:<signal>" (see writes.BindAll); we re-derive the entity
+// address and emit a "uc_signal" NDJSON line so the bridge can expose the
+// value as a Home Assistant sensor.
+//
+// In text mode (no JSON output) we just log it: there is no consumer for the
+// JSON line.
+func (a *App) onWriteUseCaseSignal(ski string, entity spineapi.EntityRemoteInterface, tagged, value, valueType, unit string) {
+	if entity == nil {
+		return
+	}
+	uc, signal, ok := splitUcSignal(tagged)
+	if !ok {
+		return
+	}
+	addr := entityAddrString(entity)
+	if a.cfg.JSONOut {
+		a.emitSignal(ski, addr, uc, signal, value, valueType, unit)
+	} else {
+		AppLog.Infof("uc_signal: ski=%s entity=%s usecase=%s signal=%s value=%s",
+			maskSKI(ski), addr, uc, signal, value)
+	}
+}
+
+// splitUcSignal splits a "<uc>:<signal>" tag back into its parts.
+func splitUcSignal(tagged string) (uc, signal string, ok bool) {
+	for i := 0; i < len(tagged); i++ {
+		if tagged[i] == ':' {
+			return tagged[:i], tagged[i+1:], true
+		}
+	}
+	return "", "", false
+}
+
+// emitSignal writes one "uc_signal" NDJSON line on stdout. Used in -json mode
+// so the bridge can create/refresh the matching HA sensor. Empty value means
+// the signal is not (yet) available → skipped.
+func (a *App) emitSignal(ski, addr, uc, signal, value, valueType, unit string) {
+	if value == "" {
+		return
+	}
+	type ucSignalLine struct {
+		Kind      string `json:"kind"`
+		SKI       string `json:"ski"`
+		Entity    string `json:"entity"`
+		UseCase   string `json:"usecase"`
+		Signal    string `json:"signal"`
+		Value     string `json:"value"`
+		ValueType string `json:"value_type,omitempty"`
+		Unit      string `json:"unit,omitempty"`
+		Time      string `json:"time"`
+	}
+	line := ucSignalLine{
+		Kind:      "uc_signal",
+		SKI:       ski,
+		Entity:    addr,
+		UseCase:   uc,
+		Signal:    signal,
+		Value:     value,
+		ValueType: valueType,
+		Unit:      unit,
+		Time:      time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	payload, err := json.Marshal(line)
+	if err != nil {
+		AppLog.Warnf("emitSignal marshal: %v", err)
+		return
+	}
+	os.Stdout.Write(payload)
+	os.Stdout.Write([]byte("\n"))
 }
 
 // emitControllable writes one "controllable" NDJSON line on stdout. Used in

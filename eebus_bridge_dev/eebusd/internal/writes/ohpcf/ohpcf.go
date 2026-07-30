@@ -44,8 +44,9 @@ const (
 // wucapi.WriteUseCase and holds the underlying eebus-go *ohpcf.OHPCF once
 // Bind has been called.
 type Module struct {
-	impl    *ohpcf.OHPCF
-	eventCB wucapi.EventCallback
+	impl     *ohpcf.OHPCF
+	eventCB  wucapi.EventCallback
+	signalCB wucapi.SignalCallback
 }
 
 func init() {
@@ -97,20 +98,32 @@ func (m *Module) AvailableActionsForEntity(entity spineapi.EntityRemoteInterface
 // Bind wires the underlying eebus-go OHPCF use case to the local entity and
 // subscribes to its events. After Bind, UseCase() returns a non-nil value and
 // the use case is ready to be added to the service.
-func (m *Module) Bind(localEntity spineapi.EntityLocalInterface, eventCB wucapi.EventCallback) {
+//
+// Two callbacks are wired:
+//   - cbs.Event fires on compatibility changes (a device announced/revoked
+//     OHPCF support) → the daemon emits a "controllable" line.
+//   - cbs.Signal fires on each of the 8 OHPCF data-update events → the daemon
+//     emits a "uc_signal" line so the bridge can expose the value as a sensor.
+func (m *Module) Bind(localEntity spineapi.EntityLocalInterface, cbs wucapi.Callbacks) {
 	if localEntity == nil {
 		return
 	}
-	m.eventCB = eventCB
+	m.eventCB = cbs.Event
+	m.signalCB = cbs.Signal
 	cb := api.EntityEventCallback(func(ski string, _ spineapi.DeviceRemoteInterface, entity spineapi.EntityRemoteInterface, event api.EventType) {
-		// Only forward the "support updated" event: this is when the set of
-		// remote entities compatible with OHPCF changed (a device just
-		// announced support, or revoked it).
-		if event != ohpcf.UseCaseSupportUpdate {
-			return
-		}
-		if eventCB != nil {
-			eventCB(ski, entity)
+		switch event {
+		case ohpcf.UseCaseSupportUpdate:
+			// A device just announced (or revoked) OHPCF support.
+			if cbs.Event != nil {
+				cbs.Event(ski, entity)
+			}
+		default:
+			// One of the 8 DataUpdate* events: re-query the matching getter
+			// and forward the current value as a uc_signal.
+			if cbs.Signal == nil {
+				return
+			}
+			m.forwardSignal(ski, entity, event, cbs.Signal)
 		}
 	})
 	m.impl = ohpcf.NewOHPCF(localEntity, cb)
@@ -143,6 +156,129 @@ func (m *Module) EntityState(entity spineapi.EntityRemoteInterface) string {
 		return ""
 	}
 	return mapStateToHA(state)
+}
+
+// EmitSignals pushes all 8 OHPCF read-signal values for one entity through the
+// Signal callback registered in Bind. Called by the daemon once when a remote
+// entity becomes compatible, so the bridge gets an initial snapshot instead of
+// waiting for the first device notification (HA would otherwise show "unknown").
+// Each getter is queried independently; if a value is not (yet) available the
+// signal is skipped.
+func (m *Module) EmitSignals(ski string, entity spineapi.EntityRemoteInterface) {
+	if m.impl == nil || entity == nil || m.signalCB == nil {
+		return
+	}
+	for _, event := range ohpcfDataUpdateEvents {
+		m.forwardSignal(ski, entity, event, m.signalCB)
+	}
+}
+
+// ohpcfDataUpdateEvents is the full set of OHPCF Scenario-1 data-update events.
+// Used by EmitSignals to push an initial snapshot in a stable order.
+var ohpcfDataUpdateEvents = []api.EventType{
+	ohpcf.DataUpdateRequestedPowerEstimate,
+	ohpcf.DataUpdateRequestedPowerMax,
+	ohpcf.DataUpdateConsumptionStartTime,
+	ohpcf.DataUpdateConsumptionIsPausable,
+	ohpcf.DataUpdateConsumptionIsStoppable,
+	ohpcf.DataUpdateMinimalRunDuration,
+	ohpcf.DataUpdateMinimalPauseDuration,
+}
+
+// forwardSignal maps one OHPCF data-update event to its read signal, re-queries
+// the underlying getter, and invokes cb with the typed value. On any error or
+// absent value it is a no-op (the signal stays silent until real data arrives).
+//
+// The ski is best-effort here: the upstream event callback does not carry it
+// per-signal, so EmitSignals passes "". The real ski is attached by the daemon
+// when it already knows the entity's device. (In practice the per-event path
+// fires from the eebus-go callback which DOES carry ski; EmitSignals is the
+// only caller passing "" and the daemon re-derives ski from the entity.)
+func (m *Module) forwardSignal(ski string, entity spineapi.EntityRemoteInterface, event api.EventType, cb wucapi.SignalCallback) {
+	if m.impl == nil || entity == nil || cb == nil {
+		return
+	}
+	switch event {
+	case ohpcf.DataUpdateRequestedPowerEstimate:
+		v, err := m.impl.RequestedPowerEstimate(entity)
+		emitNumber(cb, ski, entity, "requested_power", v, err, "W")
+	case ohpcf.DataUpdateRequestedPowerMax:
+		v, err := m.impl.RequestedPowerMax(entity)
+		emitNumber(cb, ski, entity, "max_power", v, err, "W")
+	case ohpcf.DataUpdateConsumptionStartTime:
+		v, err := m.impl.PowerConsumptionProcessStartTime(entity)
+		if err == nil {
+			emit(cb, ski, entity, "start_time", v.UTC().Format(time.RFC3339), "date_time", "")
+		}
+	case ohpcf.DataUpdateConsumptionIsPausable:
+		v, err := m.impl.ConsumptionIsPausable(entity)
+		emitBool(cb, ski, entity, "is_pausable", v, err)
+	case ohpcf.DataUpdateConsumptionIsStoppable:
+		v, err := m.impl.ConsumptionIsStoppable(entity)
+		emitBool(cb, ski, entity, "is_stoppable", v, err)
+	case ohpcf.DataUpdateMinimalRunDuration:
+		v, err := m.impl.PowerConsumptionMinimalRunDuration(entity)
+		emitDuration(cb, ski, entity, "min_run_duration", v, err)
+	case ohpcf.DataUpdateMinimalPauseDuration:
+		v, err := m.impl.PowerConsumptionMinimalPauseDuration(entity)
+		emitDuration(cb, ski, entity, "min_pause_duration", v, err)
+	case ohpcf.DataUpdateConsumptionState:
+		// The state is already reflected on the climate entity's action topic;
+		// no separate sensor needed.
+	}
+}
+
+// emit / emitNumber / emitBool / emitDuration are thin formatters that skip the
+// signal when the value is not available (err != nil). An empty value is the
+// daemon's cue to skip the line entirely.
+func emit(cb wucapi.SignalCallback, ski string, entity spineapi.EntityRemoteInterface, signal, value, valueType, unit string) {
+	if value == "" {
+		return
+	}
+	cb(ski, entity, signal, value, valueType, unit)
+}
+
+func emitNumber(cb wucapi.SignalCallback, ski string, entity spineapi.EntityRemoteInterface, signal string, v float64, err error, unit string) {
+	if err != nil {
+		return
+	}
+	emit(cb, ski, entity, signal, formatFloat(v), "number", unit)
+}
+
+func emitBool(cb wucapi.SignalCallback, ski string, entity spineapi.EntityRemoteInterface, signal string, v bool, err error) {
+	if err != nil {
+		return
+	}
+	val := "false"
+	if v {
+		val = "true"
+	}
+	emit(cb, ski, entity, signal, val, "boolean", "")
+}
+
+func emitDuration(cb wucapi.SignalCallback, ski string, entity spineapi.EntityRemoteInterface, signal string, d time.Duration, err error) {
+	if err != nil {
+		return
+	}
+	// Whole seconds; fractional seconds are rounded to keep the wire value clean.
+	emit(cb, ski, entity, signal, fmt.Sprintf("%d", int64(d.Seconds())), "duration", "seconds")
+}
+
+// formatFloat renders a numeric value compactly (integer without decimals,
+// fractional with up to 3 significant decimals trimmed), mirroring the bridge
+// formatter so the sensor state looks consistent.
+func formatFloat(v float64) string {
+	if v == float64(int64(v)) {
+		return fmt.Sprintf("%d", int64(v))
+	}
+	s := fmt.Sprintf("%.3f", v)
+	for len(s) > 0 && s[len(s)-1] == '0' {
+		s = s[:len(s)-1]
+	}
+	if len(s) > 0 && s[len(s)-1] == '.' {
+		s = s[:len(s)-1]
+	}
+	return s
 }
 
 // Dispatch performs the requested OHPCF action on the entity. The resultCB is

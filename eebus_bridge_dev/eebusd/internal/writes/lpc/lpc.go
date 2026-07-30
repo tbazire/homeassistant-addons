@@ -76,11 +76,15 @@ func (m *Module) AvailableActionsForEntity(spineapi.EntityRemoteInterface) []str
 // Bind wires the underlying eebus-go LPC use case to the local entity and
 // subscribes to its events. After Bind, UseCase() returns a non-nil value and
 // the use case is ready to be added to the service.
-func (m *Module) Bind(localEntity spineapi.EntityLocalInterface, eventCB wucapi.EventCallback) {
+//
+// LPC exposes no read signals today (its read getters — ConsumptionLimit,
+// ConsumptionNominalMax — are left for a future lot), so only the Event
+// callback is wired; the Signal callback is intentionally unused.
+func (m *Module) Bind(localEntity spineapi.EntityLocalInterface, cbs wucapi.Callbacks) {
 	if localEntity == nil {
 		return
 	}
-	m.eventCB = eventCB
+	m.eventCB = cbs.Event
 	cb := api.EntityEventCallback(func(ski string, _ spineapi.DeviceRemoteInterface, entity spineapi.EntityRemoteInterface, event api.EventType) {
 		// Only forward the "support updated" event: this is when the set of
 		// remote entities compatible with LPC changed (a device just announced
@@ -88,12 +92,16 @@ func (m *Module) Bind(localEntity spineapi.EntityLocalInterface, eventCB wucapi.
 		if event != lpc.UseCaseSupportUpdate {
 			return
 		}
-		if eventCB != nil {
-			eventCB(ski, entity)
+		if cbs.Event != nil {
+			cbs.Event(ski, entity)
 		}
 	})
 	m.impl = lpc.NewLPC(localEntity, cb)
 }
+
+// EmitSignals is a no-op for LPC: this use case does not expose read signals
+// yet (see Bind). Implemented to satisfy wucapi.WriteUseCase.
+func (m *Module) EmitSignals(string, spineapi.EntityRemoteInterface) {}
 
 // UseCase returns the underlying eebus-go use case, ready for svc.AddUseCase.
 func (m *Module) UseCase() api.UseCaseInterface {

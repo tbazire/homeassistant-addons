@@ -37,6 +37,11 @@ const (
 	KindCommand       = "command"
 	KindControllable  = "controllable"
 	KindCommandResult = "command_result"
+	// Use-case read-signal kind (added in 0.6.0-dev). INBOUND: a use case
+	// pushes one of its read values (power estimate, pausable, start time, …)
+	// so the bridge can expose it as a sensor attached to the same device as
+	// the control entity. Read-only: carries no command surface.
+	KindUcSignal = "uc_signal"
 )
 
 // Line is the common envelope embedded by every typed payload.
@@ -136,6 +141,22 @@ type Command struct {
 	Unit   string  `json:"unit,omitempty"`
 }
 
+// UcSignal is an INBOUND line (eebusd → bridge) carrying one read-signal value
+// for a use case on a remote entity (e.g. OHPCF requested power estimate). The
+// bridge exposes it as a sensor (or binary_sensor for booleans) attached to the
+// same HA device + entity as the control entity, identified by (SKI, Entity,
+// UseCase, Signal). Value is a typed string; ValueType selects the HA device
+// class / rendering. Unit is optional ("W", "seconds", …). Read-only: there is
+// no command_topic, so this kind never triggers a write to eebusd.
+type UcSignal struct {
+	Line
+	UseCase   string `json:"usecase"`
+	Signal    string `json:"signal"`
+	Value     string `json:"value"`
+	ValueType string `json:"value_type,omitempty"` // number|boolean|date_time|duration
+	Unit      string `json:"unit,omitempty"`
+}
+
 // Event is the discriminated union returned by the parser. Exactly one field
 // is non-nil per event. Consumers type-switch on it.
 type Event struct {
@@ -146,6 +167,7 @@ type Event struct {
 	Diagnosis     *Diagnosis
 	Controllable  *Controllable
 	CommandResult *CommandResult
+	UcSignal      *UcSignal
 }
 
 // Parser reads NDJSON lines from r and yields typed Events on the returned
@@ -274,6 +296,14 @@ func (p *Parser) parseLine(line string) (Event, bool) {
 			return Event{}, false
 		}
 		return Event{CommandResult: &cr}, true
+
+	case KindUcSignal:
+		var us UcSignal
+		if err := json.Unmarshal([]byte(line), &us); err != nil {
+			p.logger.Warn("ndjson: bad uc_signal line", "err", err.Error())
+			return Event{}, false
+		}
+		return Event{UcSignal: &us}, true
 
 	default:
 		p.logger.Debug("ndjson: unknown kind, ignoring", "kind", head.Kind)

@@ -23,6 +23,56 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.6.0-dev] - 2026-07-30
+
+This release exposes the **OHPCF read signals** as Home Assistant sensors. Until
+now OHPCF only exposed the `climate` control entity (schedule/pause/resume/
+abort); the eight observability values the heat-pump compressor advertises
+(requested/max power, start time, pausable/stoppable, minimal run/pause
+durations, availability) were queried by eebus-go but never forwarded to the
+bridge. They now appear as typed sensors attached to the same device + entity.
+
+### Added
+
+- **New NDJSON kind `uc_signal`** (eebusd → bridge, read-only, backward
+  compatible — the parser ignores unknown kinds). One line per signal value,
+  carrying `(ski, entity, usecase, signal, value, value_type, unit)`. There is
+  no command surface: a `uc_signal` line never triggers a write to eebusd.
+- **Use-case read-signal plumbing.** `WriteUseCase` gained a `SignalCallback`
+  (via a `Callbacks` struct handed to `Bind`) and an `EmitSignals(ski, entity)`
+  method. A use case forwards its read values on two paths: live (on each
+  upstream data-update event) and initial snapshot (when a device becomes
+  compatible, so HA does not show "unknown" before the first notification).
+- **OHPCF now exposes 8 sensors** per compatible compressor entity:
+  - `requested_power` / `max_power` → sensor `power` (W, state_class measurement)
+  - `start_time` → sensor `timestamp`
+  - `min_run_duration` / `min_pause_duration` → sensor `duration` (min; wire
+    seconds are converted to minutes)
+  - `is_pausable` / `is_stoppable` → binary_sensor (payload true/false)
+  - `is_available` (optional) → binary_sensor
+  The sensors share the HA device of the `climate` control entity.
+- **Bridge `OnUcSignal` discovery** chooses the HA component (sensor vs
+  binary_sensor) and device_class from the value type, so the same path serves
+  any future use case's signals (LPC nominal-max, etc.) without per-use-case
+  logic.
+
+### Architecture
+
+- The signal plumbing is generic: LPC (and future use cases) already implement
+  the new `Bind`/`EmitSignals` signatures as no-ops and will light up sensors
+  the moment they start emitting signals — no bridge change required.
+- `WriteUseCase` callbacks are bundled in a `Callbacks` struct (Event + Signal)
+  rather than individual args, keeping `Bind` readable.
+
+### Notes
+
+- The eight OHPCF read signals are surfaced as recommended in the OHPCF audit;
+  the deeper SPINE data (multi-slot schedules, ScheduleConstraints, energy/
+  probabilistic values) is not wrapped by eebus-go's OHPCF and remains out of
+  scope.
+- No command surface was added: this lot is read-only and does not change
+  `write.enable` semantics.
+
 ## [0.5.1-dev] - 2026-07-30
 
 Small follow-up to 0.5.0-dev, addressing an OHPCF audit: the climate entity now
@@ -340,7 +390,8 @@ OHPCF), with an architecture designed to grow without touching the bridge.
 - The code source is intentionally kept identical to the production add-on
   at fork time. Future dev-only changes will be listed here.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.5.1...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.0...HEAD
+[0.6.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.6.0
 [0.5.1-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.5.1
 [0.5.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.5.0
 [0.4.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.4.0

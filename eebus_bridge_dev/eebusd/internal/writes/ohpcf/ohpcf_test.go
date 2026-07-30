@@ -51,6 +51,38 @@ func TestModuleDispatchBeforeBindErrors(t *testing.T) {
 	}
 }
 
+func TestEmitSignalsNilSafe(t *testing.T) {
+	// Before Bind, EmitSignals must be a no-op (no panic), not call the
+	// callback. This guards the initial-announce path in the daemon.
+	m := &Module{}
+	m.EmitSignals("ski", nil) // nil entity + no impl → returns immediately
+	// No assertion beyond "did not panic"; the callback is nil so any call
+	// would have panicked inside the emit helpers.
+}
+
+func TestFormatFloat(t *testing.T) {
+	// formatFloat backs the number-signal value formatting (requested/max
+	// power). It must render integers without a decimal point and trim
+	// fractional trailing zeros — the value IS the wire contract.
+	cases := []struct {
+		in   float64
+		want string
+	}{
+		{0, "0"},
+		{1500, "1500"},
+		{1500.5, "1500.5"},
+		{1500.25, "1500.25"},
+		{1500.123, "1500.123"},
+		{1500.1239, "1500.124"},
+	}
+	for _, c := range cases {
+		got := formatFloat(c.in)
+		if got != c.want {
+			t.Errorf("formatFloat(%v) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestMapStateToHA(t *testing.T) {
 	// The state mapping is the bridge between SPINE compressor state and HA
 	// climate action vocabulary. It MUST be stable (it is the wire contract
