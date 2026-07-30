@@ -9,6 +9,7 @@ github.com/enbility/eebus-go/usecases/api
 github.com/enbility/eebus-go/usecases/cem/ohpcf
 github.com/enbility/eebus-go/usecases/cem/vabd
 github.com/enbility/eebus-go/usecases/cem/vapd
+github.com/enbility/eebus-go/usecases/eg/lpc
 github.com/enbility/eebus-go/usecases/internal
 github.com/enbility/eebus-go/usecases/ma/mgcp
 github.com/enbility/eebus-go/usecases/ma/mpc

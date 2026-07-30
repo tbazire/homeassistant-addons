@@ -234,11 +234,18 @@ func (m *Mapper) OnControllable(c *Controllable) Discovery {
 
 	// Already announced: refresh the state/action only (no discovery re-publish).
 	if m.announced[uid] {
-		if c.Component == "climate" {
+		switch c.Component {
+		case "climate":
 			disc.StateTopic = fmt.Sprintf("%s/%s/%s/%s/mode/state", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
 			disc.StateValue = climateModeFromHAAction(c.State)
 			disc.ActionTopic = fmt.Sprintf("%s/%s/%s/%s/action/state", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
 			disc.ActionValue = c.State
+		case "number":
+			// The number entity's state topic carries the raw value (e.g. the
+			// watts limit). On refresh, c.State is that value as formatted by
+			// eebusd (or "" when no limit is active).
+			disc.StateTopic = fmt.Sprintf("%s/%s/%s/%s/value/state", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
+			disc.StateValue = c.State
 		}
 		return disc
 	}
@@ -295,15 +302,51 @@ func (m *Mapper) OnControllable(c *Controllable) Discovery {
 		disc.ActionTopic = actionTopic
 		disc.ActionValue = initial
 		disc.CommandTopics = []string{modeCmd, presetCmd}
+	case "number":
+		// A numeric setpoint (e.g. LPC power limit). The unit is declared by
+		// the use case (carried in c.Unit). A single value topic carries the
+		// current limit and receives user input; the orchestrator's
+		// decodeHACommand routes "/value/cmd" payloads to <uc>.set.
+		disc.ConfigTopic = fmt.Sprintf("%s/number/eebus_bridge/%s/config", m.discovery, uid)
+		valueState := fmt.Sprintf("%s/%s/%s/%s/value/state", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
+		valueCmd := fmt.Sprintf("%s/%s/%s/%s/value/cmd", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
+		number := &HANumber{
+			Name:              controlName(c),
+			UniqueID:          uid,
+			CommandTopic:      valueCmd,
+			StateTopic:        valueState,
+			UnitOfMeasurement: c.Unit,
+			Device:            dev,
+		}
+		disc.Config = number
+		disc.StateTopic = valueState
+		disc.StateValue = c.State
+		disc.CommandTopics = []string{valueCmd}
 	default:
 		// Unknown component: log via the empty discovery so the orchestrator
-		// skips publishing. New components (number/switch/select) will be
-		// wired here as their use cases ship.
+		// skips publishing. New components (switch/select) will be wired here
+		// as their use cases ship.
 		return disc
 	}
 
 	m.announced[uid] = true
 	return disc
+}
+
+// controlName builds a human-readable name for a generic control entity. It
+// prefers the entity type (e.g. "HeatPumpAppliance"), then the unit, then
+// falls back to the use case name.
+func controlName(c *Controllable) string {
+	if c.EntityType != "" {
+		if c.Unit != "" {
+			return fmt.Sprintf("EEBUS %s limit (%s)", c.EntityType, c.Unit)
+		}
+		return fmt.Sprintf("EEBUS %s control", c.EntityType)
+	}
+	if c.Unit != "" {
+		return fmt.Sprintf("EEBUS limit (%s)", c.Unit)
+	}
+	return fmt.Sprintf("EEBUS control (%s)", c.UseCase)
 }
 
 // climateName builds a human-readable name for a climate control entity.

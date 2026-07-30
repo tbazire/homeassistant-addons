@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -223,8 +224,12 @@ func (o *Orchestrator) subscribeCommand(mqtt *MQTTClient, cmdTopic string, c *Co
 // triple for the NDJSON Command wire format. Returns ok=false for payloads we
 // do not know how to translate (the orchestrator logs and drops them).
 //
-// Routing is based on the topic suffix (mode/cmd vs preset/cmd) so the same
-// decoder works for any climate control entity regardless of the use case.
+// Routing is based on the topic suffix:
+//   - /mode/cmd   → off→<uc>.abort, auto/heat/cool→<uc>.schedule (climate)
+//   - /preset/cmd → pause→<uc>.pause, resume/none/""→<uc>.resume (climate)
+//   - /value/cmd  → <uc>.set with the parsed float value (number entities)
+//
+// The same decoder works for any use case regardless of component.
 func decodeHACommand(topic, payload string, c *Controllable) (op string, value float64, unit string, ok bool) {
 	p := strings.TrimSpace(strings.ToLower(payload))
 	switch {
@@ -242,6 +247,20 @@ func decodeHACommand(topic, payload string, c *Controllable) (op string, value f
 		case "resume", "none", "":
 			return c.UseCase + ".resume", 0, "", true
 		}
+	case strings.HasSuffix(topic, "/value/cmd"):
+		// Number entities carry a numeric payload (e.g. a watts limit). Parse
+		// the trimmed original payload (NOT the lowercased one — parsing digits
+		// is case-insensitive anyway, but we avoid any future locale surprise).
+		// An empty payload clears the limit.
+		raw := strings.TrimSpace(payload)
+		if raw == "" {
+			return c.UseCase + ".clear", 0, c.Unit, true
+		}
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return "", 0, "", false
+		}
+		return c.UseCase + ".set", v, c.Unit, true
 	}
 	return "", 0, "", false
 }

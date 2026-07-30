@@ -23,6 +23,56 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.5.0-dev] - 2026-07-30
+
+This release adds the **LPC** (Limitation of Power Consumption) write use case
+on top of the generic write pipeline introduced in 0.4.0-dev, and extends the
+contract so any future numeric use case (LPP, OPEV current limit, …) carries
+its own unit of measurement. No behaviour change for read-only deployments or
+for OHPCF users.
+
+### Added
+
+- **LPC use case (power consumption limit).** When a paired device exposes the
+  `LoadControl` feature — heat pumps, wallboxes, inverters, batteries,
+  sub-meters, any controllable system — a `number` entity appears in Home
+  Assistant representing the active power limit in watts (W). Setting a value
+  caps the device's consumption; clearing it removes the cap. A value of `0`
+  or a non-positive input is interpreted as "clear" (SPINE LoadControl limits
+  are absolute magnitudes). The use case is generic: it targets whatever
+  entity advertises `LoadControl`, regardless of brand.
+- **Per-use-case unit of measurement.** The `WriteUseCase` interface gained a
+  `HAUnit()` method, and the `controllable` NDJSON line now carries an optional
+  `unit` field. The unit (W for LPC, A for a future current-limit use case, °C
+  for a setpoint, …) flows from the use case module → eebusd → bridge → HA
+  discovery, so the slider is labelled correctly for any device family.
+  Climate/switch/select use cases return an empty unit.
+- **Bridge: `number` discovery + command routing.** `OnControllable` builds a
+  `HANumber` entity for `component: "number"`, subscribes to its `value/cmd`
+  topic, and `decodeHACommand` routes `/value/cmd` payloads to `<uc>.set` (with
+  the parsed float) or `<uc>.clear` (empty payload). Non-numeric payloads are
+  rejected so no garbage value reaches eebusd.
+
+### Architecture
+
+- The LPC module (`eebusd/internal/writes/lpc/`) wraps eebus-go's
+  `usecases/eg/lpc` (Energy Guard actor = our CEM role) and reuses the exact
+  registry/dispatch/result-callback pattern from OHPCF — confirming the
+  modular design's promise: adding a use case is one self-contained package
+  plus one blank import in `writes/bind.go`, with zero change to the dispatcher
+  or the bridge's component-agnostic discovery.
+
+### Notes
+
+- LPC applies to a broad device range (any controllable load, not just heat
+  pumps). The VR920 is one example; wallboxes, inverters and batteries expose
+  the same `LoadControl` feature and will light up the same `number` entity.
+- Time-bounded limits (a cap that auto-expires after N minutes) are
+  intentionally out of scope here; they would need a duration field on the wire
+  contract and can be added later without disturbing the persistent-limit path.
+- LPP (production limit), OPEV/OSCEV (EV charging) remain planned — the
+  registry is ready for them.
+
 ## [0.4.0-dev] - 2026-07-26
 
 This release opens the **write/control channel**: the add-on is no longer
@@ -260,7 +310,8 @@ OHPCF), with an architecture designed to grow without touching the bridge.
 - The code source is intentionally kept identical to the production add-on
   at fork time. Future dev-only changes will be listed here.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.4.0...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.5.0...HEAD
+[0.5.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.5.0
 [0.4.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.4.0
 [0.3.3-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.3.3
 [0.3.2-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.3.2

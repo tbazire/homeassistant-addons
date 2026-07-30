@@ -172,15 +172,33 @@ func TestMaskSKI(t *testing.T) {
 
 func TestReExports(t *testing.T) {
 	// All/Names/Get are thin re-exports of wucapi; make sure they return the
-	// ohpcf module (shipped in this build via writes/bind.go's blank import).
+	// use cases shipped in this build (ohpcf + lpc, wired via writes/bind.go's
+	// blank imports).
 	if len(All()) == 0 {
 		t.Fatal("All() is empty — no use case registered")
 	}
-	if Get("ohpcf") == nil {
-		t.Fatal("Get(ohpcf) returned nil — module not registered")
+	for _, want := range []string{"ohpcf", "lpc"} {
+		if Get(want) == nil {
+			t.Errorf("Get(%s) returned nil — module not registered", want)
+		}
+		if !contains(Names(), want) {
+			t.Errorf("Names() should contain %s, got %v", want, Names())
+		}
 	}
-	if !contains(Names(), "ohpcf") {
-		t.Errorf("Names() should contain ohpcf, got: %v", Names())
+	// Each shipped module declares its HA component + unit; assert the
+	// contract so a silent rename breaks the test instead of HA discovery.
+	if uc := Get("ohpcf"); uc != nil {
+		if uc.HAComponent() != "climate" {
+			t.Errorf("ohpcf.HAComponent = %q, want climate", uc.HAComponent())
+		}
+	}
+	if uc := Get("lpc"); uc != nil {
+		if uc.HAComponent() != "number" {
+			t.Errorf("lpc.HAComponent = %q, want number", uc.HAComponent())
+		}
+		if uc.HAUnit() != "W" {
+			t.Errorf("lpc.HAUnit = %q, want W", uc.HAUnit())
+		}
 	}
 }
 

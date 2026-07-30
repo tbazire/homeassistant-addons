@@ -73,6 +73,13 @@ type WriteUseCase interface {
 	// the discovery payload builder from this.
 	HAComponent() string
 
+	// HAUnit returns the Home Assistant unit of measurement the exposed entity
+	// uses (e.g. "W" for LPC, "A" for a current-limit use case, "°C" for a
+	// temperature setpoint). It is only meaningful for number-like components;
+	// climate/switch/select ignore it (return ""). Declared by the use case so
+	// the bridge stays agnostic of the physical quantity being controlled.
+	HAUnit() string
+
 	// AvailableActions lists the action verbs this use case accepts in Dispatch
 	// (e.g. ["schedule","pause","resume","abort"]). They are appended to Name
 	// to form the op ("ohpcf.pause"). The order is the suggested display order.

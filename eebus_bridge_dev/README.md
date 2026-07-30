@@ -133,17 +133,23 @@ By default this add-on is **read-only** (sensors only). Setting
 also **act** on the device.
 
 The add-on is **generic**: it activates the write use cases the *device
-itself* advertises over SPINE, not a hardcoded list. The first use case
-shipped is **OHPCF** (heat-pump compressor flexibility): on a compatible heat
-pump (e.g. a Saunier Duval/Vaillant VR920 exposing the
-`SmartEnergyManagementPs` feature), a `climate` entity appears whose modes
-(`off` = abort, `auto` = schedule) and presets (`pause`, `resume`) map to
-SPINE write commands.
+itself* advertises over SPINE, not a hardcoded list. Two use cases are shipped:
+
+- **OHPCF** (heat-pump compressor flexibility): on a compatible heat pump
+  (e.g. a Saunier Duval/Vaillant VR920 exposing the `SmartEnergyManagementPs`
+  feature), a `climate` entity appears whose modes (`off` = abort,
+  `auto` = schedule) and presets (`pause`, `resume`) map to SPINE write
+  commands.
+- **LPC** (limitation of power consumption): on any controllable system that
+  exposes the `LoadControl` feature (heat pumps, wallboxes, inverters,
+  batteries, sub-meters), a `number` entity appears representing the active
+  power limit in watts (W). Setting it caps the device's consumption; the
+  entity reflects the device-reported limit.
 
 | Use case | Typical device | HA entity | Status |
 |----------|----------------|-----------|--------|
 | OHPCF | Heat pumps | `climate` (off/auto + pause/resume presets) | ✅ shipped |
-| LPC | Heat pumps, wallboxes, controllable loads | `number` (W limit) | 🚧 planned |
+| LPC | Heat pumps, wallboxes, controllable loads | `number` (W limit) | ✅ shipped |
 | LPP | Inverters | `number` (W limit) | 🚧 planned |
 | OPEV / OSCEV | Wallboxes | `number` / `climate` | 🚧 planned |
 
