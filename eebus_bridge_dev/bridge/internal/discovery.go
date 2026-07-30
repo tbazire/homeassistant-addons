@@ -99,6 +99,19 @@ type HASelect struct {
 	Device       *HADevice `json:"device,omitempty"`
 }
 
+// HABinarySensor is the discovery payload for a binary_sensor entity (on/off).
+// Used by use-case read signals that are booleans (e.g. OHPCF is_pausable). The
+// payload_on/payload_off strings match the value format the use case emits.
+type HABinarySensor struct {
+	Name        string    `json:"name"`
+	UniqueID    string    `json:"unique_id"`
+	StateTopic  string    `json:"state_topic"`
+	DeviceClass string    `json:"device_class,omitempty"`
+	PayloadOn   string    `json:"payload_on,omitempty"`
+	PayloadOff  string    `json:"payload_off,omitempty"`
+	Device      *HADevice `json:"device,omitempty"`
+}
+
 // Discovery encodes the full set of topics + payloads needed to publish one
 // event: the discovery config (topic + payload) and the state (topic + value).
 //
@@ -347,6 +360,157 @@ func controlName(c *Controllable) string {
 		return fmt.Sprintf("EEBUS limit (%s)", c.Unit)
 	}
 	return fmt.Sprintf("EEBUS control (%s)", c.UseCase)
+}
+
+// OnUcSignal maps a use-case read-signal event into a Discovery descriptor for
+// a typed HA sensor. The HA component + device class + unit are chosen from the
+// signal's value type, so the same method handles every use case's signals
+// (OHPCF today, LPC/others later) without per-use-case logic.
+//
+// Component selection:
+//   - boolean values            → binary_sensor
+//   - number/date_time/duration → sensor with the matching device_class
+//
+// The sensor attaches to the same HA device as the control entity (same SKI)
+// and is announced once per (ski, entity, usecase, signal); subsequent lines
+// only refresh the state.
+func (m *Mapper) OnUcSignal(s *UcSignal) Discovery {
+	uid := ucSignalUniqueID(s.SKI, s.Entity, s.UseCase, s.Signal)
+	stateTopic := fmt.Sprintf("%s/%s/%s/%s/%s/state", m.prefix, s.SKI, entitySafe(s.Entity), s.UseCase, s.Signal)
+	disc := Discovery{StateTopic: stateTopic, StateValue: signalStateValue(s)}
+
+	// Already announced: state-only refresh.
+	if m.announced[uid] {
+		return disc
+	}
+
+	dev := m.devices[s.SKI]
+	if dev == nil {
+		// Signal arrived before any manufacturer line: synthesise a minimal
+		// device block so the sensor attaches to something.
+		dev = &HADevice{
+			Identifiers: []string{s.SKI},
+			Name:        defaultDeviceName(s.SKI),
+		}
+		m.devices[s.SKI] = dev
+	}
+
+	switch s.ValueType {
+	case "boolean":
+		disc.ConfigTopic = fmt.Sprintf("%s/binary_sensor/eebus_bridge/%s/config", m.discovery, uid)
+		disc.Config = &HABinarySensor{
+			Name:        signalName(s.UseCase, s.Signal),
+			UniqueID:    uid,
+			StateTopic:  stateTopic,
+			DeviceClass: signalBinaryDeviceClass(s.Signal),
+			PayloadOn:   "true",
+			PayloadOff:  "false",
+			Device:      dev,
+		}
+	default:
+		// number / date_time / duration → typed sensor.
+		disc.ConfigTopic = fmt.Sprintf("%s/sensor/eebus_bridge/%s/config", m.discovery, uid)
+		unit, class, stateClass := signalSensorAttrs(s.Signal, s.ValueType, s.Unit)
+		disc.Config = &HASensor{
+			Name:              signalName(s.UseCase, s.Signal),
+			StateTopic:        stateTopic,
+			UniqueID:          uid,
+			UnitOfMeasurement: unit,
+			DeviceClass:       class,
+			StateClass:        stateClass,
+			Device:            dev,
+		}
+		// The state value for duration signals is published in the unit the
+		// sensor declares (minutes), converted from the wire's seconds.
+		if s.ValueType == "duration" {
+			disc.StateValue = signalDurationMinutes(s.Value)
+		}
+	}
+
+	m.announced[uid] = true
+	return disc
+}
+
+// signalStateValue renders the value to publish on the state topic. Booleans
+// pass through as-is ("true"/"false"); durations are converted to minutes (the
+// HA duration unit); numbers and date_times pass through verbatim.
+func signalStateValue(s *UcSignal) string {
+	if s.ValueType == "duration" {
+		return signalDurationMinutes(s.Value)
+	}
+	return s.Value
+}
+
+// signalDurationMinutes converts a wire duration value (seconds, integer
+// string) into minutes as a rounded integer string, which is the unit the HA
+// duration sensor uses. Non-numeric input is returned unchanged so a bad value
+// never blanks the sensor.
+func signalDurationMinutes(secondsStr string) string {
+	v, err := parseSeconds(secondsStr)
+	if err != nil {
+		return secondsStr
+	}
+	minutes := v / 60
+	return fmt.Sprintf("%d", minutes)
+}
+
+// signalName builds a human-readable sensor name from the use case + signal.
+func signalName(useCase, signal string) string {
+	return fmt.Sprintf("EEBUS %s %s", useCase, prettifySignal(signal))
+}
+
+// prettifySignal turns "requested_power" into "requested power" for display.
+func prettifySignal(s string) string {
+	return strings.ReplaceAll(s, "_", " ")
+}
+
+// signalSensorAttrs returns the (unit, device_class, state_class) triple for a
+// non-boolean signal, chosen by signal identity + value type. Falls back to a
+// plain sensor (no class) for unknown signals so they still show up.
+func signalSensorAttrs(signal, valueType, wireUnit string) (unit, class, stateClass string) {
+	switch signal {
+	case "requested_power", "max_power":
+		// Power in watts.
+		return "W", "power", "measurement"
+	case "start_time":
+		// An absolute instant in time.
+		return "", "timestamp", ""
+	case "min_run_duration", "min_pause_duration":
+		// Duration expressed in minutes (the HA duration unit).
+		return "min", "duration", "measurement"
+	}
+	// Unknown signal: fall back to the wire unit + no class.
+	return wireUnit, "", ""
+}
+
+// signalBinaryDeviceClass picks a HA binary_sensor device_class for a boolean
+// signal. OHPCF capability flags read as "is the device able to…", which maps
+// best to "running"/"heat" loosely; we use "running" for pausable/stoppable
+// (a process that can be paused is "running-capable") and "power" for
+// availability. These are display hints only — the value itself is what matters.
+func signalBinaryDeviceClass(signal string) string {
+	switch signal {
+	case "is_pausable", "is_stoppable":
+		return "running"
+	case "is_available":
+		return "power"
+	}
+	return ""
+}
+
+// ucSignalUniqueID builds a stable HA unique_id for one use-case signal. The
+// use case + signal make it distinct from the control entity's unique_id and
+// from other use cases' signals on the same entity.
+func ucSignalUniqueID(ski, entity, useCase, signal string) string {
+	return uniqueID(ski, entity, useCase+"_"+signal)
+}
+
+// parseSeconds parses an integer seconds string. Centralised so the duration
+// conversion has one error path.
+func parseSeconds(s string) (int64, error) {
+	var n int64
+	_, err := fmt.Sscanf(s, "%d", &n)
+	return n, err
 }
 
 // climateName builds a human-readable name for a climate control entity.

@@ -153,6 +153,17 @@ func (o *Orchestrator) handleEvent(ev Event, mapper *Mapper, mqtt *MQTTClient, e
 			}
 		}
 
+	case ev.UcSignal != nil:
+		// A use case read signal (e.g. OHPCF requested power estimate) arrived.
+		// Map it to a typed sensor: publish discovery the first time, then only
+		// refresh the state on subsequent lines. Read-only: no command topic,
+		// so no eebusd write is ever triggered by these entities.
+		disc := mapper.OnUcSignal(ev.UcSignal)
+		if disc.Config != nil {
+			o.publishDiscovery(mqtt, disc)
+		}
+		o.publishState(mqtt, disc.StateTopic, disc.StateValue)
+
 	case ev.CommandResult != nil:
 		// Outcome of a previously-dispatched command. Surface on the bridge
 		// status topic and log it; HA already reflects the new state via the

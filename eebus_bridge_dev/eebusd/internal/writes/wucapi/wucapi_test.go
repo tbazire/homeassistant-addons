@@ -46,7 +46,8 @@ func (f *fakeUseCase) Dispatch(action, ski string, entity spineapi.EntityRemoteI
 	}
 	return nil
 }
-func (f *fakeUseCase) Bind(spineapi.EntityLocalInterface, EventCallback) { f.bound = true }
+func (f *fakeUseCase) Bind(spineapi.EntityLocalInterface, Callbacks)      { f.bound = true }
+func (f *fakeUseCase) EmitSignals(string, spineapi.EntityRemoteInterface) {}
 
 func TestRegisterAndGet(t *testing.T) {
 	// Use a sub-test with a freshly registered fake. We cannot easily unload

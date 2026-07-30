@@ -139,7 +139,8 @@ itself* advertises over SPINE, not a hardcoded list. Two use cases are shipped:
   (e.g. a Saunier Duval/Vaillant VR920 exposing the `SmartEnergyManagementPs`
   feature), a `climate` entity appears whose modes (`off` = abort,
   `auto` = schedule) and presets (`pause`, `resume`) map to SPINE write
-  commands.
+  commands. Read-only sensors (requested/max power, start time, minimal run/pause
+  durations, pausable/stoppable) are also exposed alongside it.
 - **LPC** (limitation of power consumption): on any controllable system that
   exposes the `LoadControl` feature (heat pumps, wallboxes, inverters,
   batteries, sub-meters), a `number` entity appears representing the active

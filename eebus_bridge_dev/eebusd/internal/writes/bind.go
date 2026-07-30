@@ -26,19 +26,39 @@ import (
 	spineapi "github.com/enbility/spine-go/api"
 )
 
-// BindAll calls Bind(localEntity, eventCB) on every registered use case. It is
-// the single point the daemon calls at startup to wire the write use cases
-// before they are added to the service.
+// BindAll calls Bind(localEntity, cbs) on every registered use case. It is the
+// single point the daemon calls at startup to wire the write use cases before
+// they are added to the service.
 //
-// eventCB is invoked by each use case whenever a remote entity becomes (or
-// stops being) compatible with it; the daemon uses it to emit a "controllable"
-// line so the bridge can create the matching HA entity.
-func BindAll(localEntity spineapi.EntityLocalInterface, eventCB wucapi.EventCallback) error {
+// cbs.Event is invoked by each use case whenever a remote entity becomes (or
+// stops being) compatible with it; the daemon emits a "controllable" line so
+// the bridge can create the matching HA entity. cbs.Signal is invoked on
+// per-entity read-signal updates; the daemon emits a "uc_signal" line so the
+// bridge can expose the value as a sensor. A use case that has no read signals
+// simply never invokes cbs.Signal.
+//
+// The Signal callback is wrapped per use case so the daemon knows which use
+// case a signal belongs to (the upstream callback carries the entity but not
+// the use case name).
+func BindAll(localEntity spineapi.EntityLocalInterface, cbs wucapi.Callbacks) error {
 	if localEntity == nil {
 		return errNoLocalEntity
 	}
 	for _, uc := range wucapi.All() {
-		uc.Bind(localEntity, eventCB)
+		ucName := uc.Name()
+		perUC := wucapi.Callbacks{
+			Event: cbs.Event,
+			Signal: func(ski string, entity spineapi.EntityRemoteInterface, signal, value, valueType, unit string) {
+				if cbs.Signal == nil {
+					return
+				}
+				// Tag the signal with its use case so the daemon can emit a
+				// fully-qualified uc_signal line. We reuse the signal field to
+				// avoid changing the callback signature: "<uc>:<signal>".
+				cbs.Signal(ski, entity, ucName+":"+signal, value, valueType, unit)
+			},
+		}
+		uc.Bind(localEntity, perUC)
 	}
 	return nil
 }

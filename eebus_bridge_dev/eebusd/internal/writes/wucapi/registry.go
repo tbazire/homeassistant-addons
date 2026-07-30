@@ -114,17 +114,45 @@ type WriteUseCase interface {
 	// not been bound to a local entity yet (see Bind).
 	UseCase() api.UseCaseInterface
 
-	// Bind wires the use case to a local entity and an event callback. Called
+	// Bind wires the use case to a local entity and the daemon callbacks. Called
 	// once at startup, before the use case is added to the service. After Bind,
 	// UseCase() returns a non-nil value and IsCompatible/Dispatch/EntityState
 	// become usable.
-	Bind(localEntity spineapi.EntityLocalInterface, eventCB EventCallback)
+	//
+	// cbs carries two callbacks: Event (compatibility/support changes → the
+	// daemon emits a "controllable" line) and Signal (per-entity read signals
+	// → the daemon emits "uc_signal" lines so the bridge can expose sensors).
+	// A use case that has no read signals simply never invokes Signal.
+	Bind(localEntity spineapi.EntityLocalInterface, cbs Callbacks)
+
+	// EmitSignals pushes the use case's current read-signal values for one
+	// entity (identified by ski) through the Signal callback registered in
+	// Bind. The daemon calls it once when a remote entity becomes compatible,
+	// so the bridge gets an initial snapshot instead of waiting for the first
+	// device notification. Use cases without read signals implement this as a
+	// no-op.
+	EmitSignals(ski string, entity spineapi.EntityRemoteInterface)
 }
 
 // EventCallback is invoked by a bound use case whenever the set of remote
 // entities/scenarios it targets changes (typically: a device just announced
 // support for this use case). The daemon uses it to emit a "controllable" line.
 type EventCallback func(ski string, entity spineapi.EntityRemoteInterface)
+
+// SignalCallback is invoked by a use case to push one read-signal value for a
+// remote entity toward the bridge (which exposes it as a sensor). signal is the
+// stable identifier ("requested_power", "is_pausable", …), value is the value
+// formatted as a string, valueType is one of "number"/"boolean"/"date_time"/
+// "duration", and unit is the optional unit ("W", "seconds", …). An empty value
+// means the signal is not (yet) available and SHOULD be skipped by the daemon.
+type SignalCallback func(ski string, entity spineapi.EntityRemoteInterface, signal, value, valueType, unit string)
+
+// Callbacks bundles the two daemon-side callbacks handed to a use case in Bind.
+// Both are optional (nil-safe): a minimal use case may set only Event.
+type Callbacks struct {
+	Event  EventCallback
+	Signal SignalCallback
+}
 
 // ---- Registry --------------------------------------------------------------
 
