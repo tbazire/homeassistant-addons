@@ -62,9 +62,36 @@ func (m *Module) HAComponent() string { return haComponent }
 // which has no unit of measurement. Implemented to satisfy wucapi.WriteUseCase.
 func (m *Module) HAUnit() string { return "" }
 
-// AvailableActions lists the OHPCF actions exposed to the bridge.
-func (m *Module) AvailableActions() []string {
-	return []string{"schedule", "pause", "resume", "abort"}
+// AvailableActionsForEntity lists the OHPCF actions the given entity actually
+// supports. "schedule" is always offered (it is the core scheduling verb and
+// the device has already advertised the OHPCF scenarios to reach this point).
+// "pause"/"resume" are offered only when the device advertises isPausable
+// (OHPCF-011/6): a non-pausable compressor cannot honour them, so exposing a
+// control that would always be rejected is worse than not exposing it.
+// "abort" is offered only when the device advertises isStoppable (OHPCF-011/5).
+//
+// When the capability queries fail (data not yet available), we fall back to
+// the full static list so the entity is still usable while the device is still
+// announcing its details — the dispatcher will surface a clean command_result
+// if a control turns out unsupported at run time.
+func (m *Module) AvailableActionsForEntity(entity spineapi.EntityRemoteInterface) []string {
+	// No underlying use case yet (Bind not called) or no entity: return the
+	// full static list so discovery is not blocked while wiring completes.
+	if m.impl == nil || entity == nil {
+		return []string{"schedule", "pause", "resume", "abort"}
+	}
+
+	actions := []string{"schedule"}
+
+	pausable, errPause := m.impl.ConsumptionIsPausable(entity)
+	if errPause != nil || pausable {
+		actions = append(actions, "pause", "resume")
+	}
+	stoppable, errStop := m.impl.ConsumptionIsStoppable(entity)
+	if errStop != nil || stoppable {
+		actions = append(actions, "abort")
+	}
+	return actions
 }
 
 // Bind wires the underlying eebus-go OHPCF use case to the local entity and

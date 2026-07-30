@@ -23,6 +23,36 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.5.1-dev] - 2026-07-30
+
+Small follow-up to 0.5.0-dev, addressing an OHPCF audit: the climate entity now
+only exposes controls the device actually supports, instead of a hardcoded list.
+
+### Fixed
+
+- **OHPCF actions are now per-entity, not hardcoded.** Previously the `pause` /
+  `resume` presets and the `abort` mode were always offered, even when the
+  device advertised `isPausable=false` or `isStoppable=false` (OHPCF-011/6 and
+  OHPCF-011/5). Selecting an unsupported control would always be rejected by
+  the device. The `WriteUseCase` interface's `AvailableActions()` is now
+  `AvailableActionsForEntity(entity)`: OHPCF derives `pause`/`resume` from
+  `ConsumptionIsPausable` and `abort` from `ConsumptionIsStoppable`, keeping
+  `schedule` always available. When the capability data is not yet known
+  (device still announcing), the full list is returned as a safe fallback.
+- **LPC** returns its static `[set, clear]` list (no per-entity capability
+  flags in the LPC use case).
+
+### Notes
+
+- This does not change the wire contract (the `controllable` line still carries
+  the filtered `actions` array); the bridge was already generic over it.
+- An OHPCF audit (cross-checked against the Saunier Duval/Bosch SDBG heat-pump
+  manual `eebusManual.pdf` §1.3.1–1.3.4 and the eebus-go OHPCF surface)
+  confirmed the four control verbs are fully covered; the per-entity filtering
+  was the one concrete gap. The eight OHPCF read signals (requested/max power,
+  start time, pausable/stoppable, min run/pause durations) are still pending a
+  future read-side exposure lot.
+
 ## [0.5.0-dev] - 2026-07-30
 
 This release adds the **LPC** (Limitation of Power Consumption) write use case
@@ -310,7 +340,8 @@ OHPCF), with an architecture designed to grow without touching the bridge.
 - The code source is intentionally kept identical to the production add-on
   at fork time. Future dev-only changes will be listed here.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.5.0...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.5.1...HEAD
+[0.5.1-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.5.1
 [0.5.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.5.0
 [0.4.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.4.0
 [0.3.3-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.3.3

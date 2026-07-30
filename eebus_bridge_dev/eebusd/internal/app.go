@@ -314,7 +314,7 @@ func (a *App) onWriteUseCaseEvent(ski string, entity spineapi.EntityRemoteInterf
 		if !uc.IsCompatible(entity) {
 			continue
 		}
-		actions := uc.AvailableActions()
+		actions := uc.AvailableActionsForEntity(entity)
 		state := uc.EntityState(entity)
 		if a.cfg.JSONOut {
 			a.emitControllable(ski, addr, entType, uc.Name(), uc.HAComponent(), uc.HAUnit(), actions, state)

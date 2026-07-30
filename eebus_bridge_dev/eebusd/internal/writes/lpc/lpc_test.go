@@ -28,11 +28,12 @@ func TestModuleNameAndComponent(t *testing.T) {
 }
 
 func TestModuleActions(t *testing.T) {
+	// LPC has no per-entity capability flags, so the static list is returned.
 	m := &Module{}
-	actions := m.AvailableActions()
+	actions := m.AvailableActionsForEntity(nil)
 	want := map[string]bool{"set": true, "clear": true}
 	if len(actions) != len(want) {
-		t.Fatalf("AvailableActions = %v, want %d entries", actions, len(want))
+		t.Fatalf("AvailableActionsForEntity = %v, want %d entries", actions, len(want))
 	}
 	for _, a := range actions {
 		if !want[a] {
