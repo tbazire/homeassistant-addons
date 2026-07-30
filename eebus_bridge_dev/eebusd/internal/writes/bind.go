@@ -19,6 +19,7 @@ package writes
 import (
 	// Register every shipped write use case. Each line pulls in a sub-package
 	// whose init() calls wucapi.Register.
+	_ "eebusd/internal/writes/lpc"
 	_ "eebusd/internal/writes/ohpcf"
 
 	"eebusd/internal/writes/wucapi"

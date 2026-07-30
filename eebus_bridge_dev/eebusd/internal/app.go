@@ -317,7 +317,7 @@ func (a *App) onWriteUseCaseEvent(ski string, entity spineapi.EntityRemoteInterf
 		actions := uc.AvailableActions()
 		state := uc.EntityState(entity)
 		if a.cfg.JSONOut {
-			a.emitControllable(ski, addr, entType, uc.Name(), uc.HAComponent(), actions, state)
+			a.emitControllable(ski, addr, entType, uc.Name(), uc.HAComponent(), uc.HAUnit(), actions, state)
 		} else {
 			AppLog.Infof("controllable: ski=%s entity=%s usecase=%s actions=%v state=%s",
 				maskSKI(ski), addr, uc.Name(), actions, state)
@@ -327,7 +327,7 @@ func (a *App) onWriteUseCaseEvent(ski string, entity spineapi.EntityRemoteInterf
 
 // emitControllable writes one "controllable" NDJSON line on stdout. Used in
 // -json mode so the bridge can create the matching HA control entity.
-func (a *App) emitControllable(ski, addr, entityType, uc, component string, actions []string, state string) {
+func (a *App) emitControllable(ski, addr, entityType, uc, component, unit string, actions []string, state string) {
 	// Built here (not in the writes package) because the wire format belongs
 	// to the daemon's presentation layer, not the writes domain.
 	type controllableLine struct {
@@ -337,6 +337,7 @@ func (a *App) emitControllable(ski, addr, entityType, uc, component string, acti
 		EntityType string   `json:"entity_type,omitempty"`
 		UseCase    string   `json:"usecase"`
 		Component  string   `json:"component"`
+		Unit       string   `json:"unit,omitempty"`
 		Actions    []string `json:"actions"`
 		State      string   `json:"state,omitempty"`
 	}
@@ -350,6 +351,7 @@ func (a *App) emitControllable(ski, addr, entityType, uc, component string, acti
 		EntityType: entityType,
 		UseCase:    uc,
 		Component:  component,
+		Unit:       unit,
 		Actions:    actions,
 		State:      state,
 	}

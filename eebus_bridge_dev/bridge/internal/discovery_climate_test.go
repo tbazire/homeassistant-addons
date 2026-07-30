@@ -118,15 +118,16 @@ func TestOnControllable_Climate_StateOffYieldsModeOff(t *testing.T) {
 }
 
 func TestOnControllable_UnknownComponentNoDiscovery(t *testing.T) {
-	// A future use case might expose a "number" component. Until we wire it
-	// here, OnControllable MUST return an empty discovery (no config) rather
-	// than crashing or emitting a half-formed payload.
+	// A future use case might expose a component we do not model yet (e.g.
+	// "select"). Until we wire it here, OnControllable MUST return an empty
+	// discovery (no config) rather than crashing or emitting a half-formed
+	// payload.
 	m := NewMapper("eebus", "homeassistant")
 	c := &Controllable{
 		Line:      Line{SKI: "ski", Entity: "0"},
-		UseCase:   "lpc",
-		Component: "number",
-		Actions:   []string{"set"},
+		UseCase:   "futureselect",
+		Component: "select",
+		Actions:   []string{"pick"},
 	}
 	disc := m.OnControllable(c)
 	if disc.Config != nil {
@@ -202,6 +203,131 @@ func TestDecodeHACommand_UnknownPayload(t *testing.T) {
 	_, _, _, ok := decodeHACommand("eebus/s/3_1/ohpcf/mode/cmd", "ecOmode", c)
 	if ok {
 		t.Error("unknown payload must decode to ok=false so the orchestrator logs+drops it")
+	}
+}
+
+func TestOnControllable_Number_LPC(t *testing.T) {
+	// LPC exposes a number entity (power limit in watts). Verify the discovery
+	// payload, topic layout and command topic subscription.
+	m := NewMapper("eebus", "homeassistant")
+	ski := "aaaabbbbccccddddeeee00001111222233334444"
+	m.OnManufacturer(&Manufacturer{Line: Line{SKI: ski}, BrandName: "SD", DeviceName: "VR920"})
+
+	c := &Controllable{
+		Line:       Line{SKI: ski, Entity: "1.1"},
+		EntityType: "HeatPumpAppliance",
+		UseCase:    "lpc",
+		Component:  "number",
+		Unit:       "W",
+		Actions:    []string{"set", "clear"},
+		State:      "1500",
+	}
+	disc := m.OnControllable(c)
+	if disc.Config == nil {
+		t.Fatal("OnControllable must publish a discovery for number")
+	}
+	nb, ok := disc.Config.(*HANumber)
+	if !ok {
+		t.Fatalf("config payload is %T, want *HANumber", disc.Config)
+	}
+
+	// Topic must be under number/, not sensor/ or climate/.
+	if !strings.Contains(disc.ConfigTopic, "homeassistant/number/eebus_bridge/") {
+		t.Errorf("config topic should be number/, got: %q", disc.ConfigTopic)
+	}
+
+	// Unit must be propagated from the controllable line.
+	if nb.UnitOfMeasurement != "W" {
+		t.Errorf("unit = %q, want W", nb.UnitOfMeasurement)
+	}
+
+	// Command topic must end with /value/cmd so decodeHACommand routes it.
+	if !strings.HasSuffix(nb.CommandTopic, "/lpc/value/cmd") {
+		t.Errorf("command topic wrong: %q", nb.CommandTopic)
+	}
+
+	// One command topic to subscribe to (the value cmd).
+	if len(disc.CommandTopics) != 1 || disc.CommandTopics[0] != nb.CommandTopic {
+		t.Errorf("CommandTopics = %v, want [%s]", disc.CommandTopics, nb.CommandTopic)
+	}
+
+	// Device block attached.
+	if nb.Device == nil || nb.Device.Name != "VR920" {
+		t.Errorf("device not attached: %+v", nb.Device)
+	}
+
+	// Initial state passes through verbatim (the watts value).
+	if disc.StateValue != "1500" {
+		t.Errorf("state value = %q, want 1500", disc.StateValue)
+	}
+}
+
+func TestOnControllable_Number_StateRefreshNoReannounce(t *testing.T) {
+	// A second controllable line for the same (ski, entity, usecase) must NOT
+	// re-publish discovery; it must only refresh the state topic.
+	m := NewMapper("eebus", "homeassistant")
+	ski := "aaaabbbbccccddddeeee00001111222233334444"
+	c := &Controllable{
+		Line:      Line{SKI: ski, Entity: "1.1"},
+		UseCase:   "lpc",
+		Component: "number",
+		Unit:      "W",
+		Actions:   []string{"set"},
+		State:     "1500",
+	}
+	first := m.OnControllable(c)
+	if first.Config == nil {
+		t.Fatal("first call must publish")
+	}
+	// Refresh with a new limit value.
+	c.State = "2000"
+	second := m.OnControllable(c)
+	if second.Config != nil {
+		t.Error("second call must NOT re-publish discovery")
+	}
+	if second.StateValue != "2000" {
+		t.Errorf("refresh state = %q, want 2000", second.StateValue)
+	}
+	if !strings.HasSuffix(second.StateTopic, "/lpc/value/state") {
+		t.Errorf("refresh topic wrong: %q", second.StateTopic)
+	}
+}
+
+func TestDecodeHACommand_ValueSet(t *testing.T) {
+	c := &Controllable{Line: Line{SKI: "s", Entity: "1.1"}, UseCase: "lpc", Component: "number", Unit: "W"}
+	op, val, unit, ok := decodeHACommand("eebus/s/1_1/lpc/value/cmd", "1500", c)
+	if !ok {
+		t.Fatal("decode failed")
+	}
+	if op != "lpc.set" {
+		t.Errorf("op = %q, want lpc.set", op)
+	}
+	if val != 1500 {
+		t.Errorf("value = %v, want 1500", val)
+	}
+	if unit != "W" {
+		t.Errorf("unit = %q, want W", unit)
+	}
+}
+
+func TestDecodeHACommand_ValueFractional(t *testing.T) {
+	c := &Controllable{Line: Line{SKI: "s", Entity: "1.1"}, UseCase: "lpc", Component: "number", Unit: "W"}
+	_, val, _, ok := decodeHACommand("eebus/s/1_1/lpc/value/cmd", "750.5", c)
+	if !ok {
+		t.Fatal("decode failed for fractional value")
+	}
+	if val != 750.5 {
+		t.Errorf("value = %v, want 750.5", val)
+	}
+}
+
+func TestDecodeHACommand_ValueInvalid(t *testing.T) {
+	// A non-numeric payload must decode to ok=false so the orchestrator logs
+	// and drops it rather than sending a garbage value to eebusd.
+	c := &Controllable{Line: Line{SKI: "s", Entity: "1.1"}, UseCase: "lpc", Component: "number"}
+	_, _, _, ok := decodeHACommand("eebus/s/1_1/lpc/value/cmd", "not-a-number", c)
+	if ok {
+		t.Error("non-numeric payload must decode to ok=false")
 	}
 }
 

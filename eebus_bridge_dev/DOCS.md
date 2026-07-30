@@ -160,7 +160,7 @@ HA UI ──► MQTT command_topic ──► eebus-bridge ──► stdin NDJSON
 | Use case | EEBUS name | Typical devices | HA entity | Actions |
 |----------|-----------|-----------------|-----------|---------|
 | **OHPCF** | Optimization of Self-Consumption by Heat-Pump Compressor Flexibility | Heat pumps (any brand exposing the `SmartEnergyManagementPs` feature: e.g. Saunier Duval/Vaillant VR920, …) | `climate` | modes `off` (abort) / `auto` (schedule); presets `pause` / `resume` |
-| LPC *(planned)* | Limitation of Power Consumption | Heat pumps, wallboxes, controllable loads | `number` | power limit in W |
+| **LPC** | Limitation of Power Consumption | Any controllable system exposing `LoadControl` (heat pumps, wallboxes, inverters, batteries, sub-meters) | `number` | power limit in W (set / clear) |
 | LPP *(planned)* | Limitation of Power Production | Inverters | `number` | production limit in W |
 | OPEV / OSCEV *(planned)* | EV charging control | Wallboxes | `number` / `climate` | per-phase current obligation/recommendation |
 
@@ -184,6 +184,28 @@ The entity's `action` reflects the real compressor state (`heating`, `idle`,
 `off`). If the device rejects a command (e.g. the compressor is not pausable),
 the action does not change and the bridge log explains the reason under
 `command result status=error`.
+
+### LPC example (power consumption limit)
+
+With `write.enable: true`, pairing any controllable system that exposes LPC
+(a heat pump, a wallbox, an inverter, a battery, …) produces a single `number`
+entity per compatible entity, representing the active power consumption limit
+in watts (W):
+
+- **Set a value** (e.g. `2000`) → cap the device's consumption at 2000 W.
+- **Clear the limit** (empty input) → remove the cap; the device returns to
+  its normal behaviour.
+
+The entity's state reflects the limit the device last reported. A value of `0`
+or a non-positive input is interpreted as "clear" (SPINE LoadControl limits are
+absolute magnitudes, so 0 is indistinguishable from "no limit"). If the device
+rejects the limit (e.g. below its failsafe floor), the state does not change
+and the bridge log explains the reason under `command result status=error`.
+
+> ℹ️ LPC is **generic**: it activates for whatever entity advertises the
+> `LoadControl` feature, regardless of brand. The unit (W) is declared by the
+> use case module and carried through to HA discovery, so the slider is
+> labelled correctly for any device family.
 
 ## Security review
 

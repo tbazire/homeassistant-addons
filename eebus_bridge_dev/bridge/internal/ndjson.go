@@ -99,12 +99,15 @@ type Diagnosis struct {
 // entity accepts one or more write actions for a given use case. The bridge
 // uses it to create the matching HA control entity (climate/number/switch/...).
 // Component is the HA discovery component to build ("climate", "number", …),
-// declared by the use case itself so the bridge stays agnostic.
+// declared by the use case itself so the bridge stays agnostic. Unit is the
+// Home Assistant unit of measurement for number-like components ("W", "A", …);
+// empty for climate/switch/select.
 type Controllable struct {
 	Line
 	EntityType string   `json:"entity_type,omitempty"`
 	UseCase    string   `json:"usecase"`
 	Component  string   `json:"component"`
+	Unit       string   `json:"unit,omitempty"`
 	Actions    []string `json:"actions"`
 	State      string   `json:"state,omitempty"`
 }

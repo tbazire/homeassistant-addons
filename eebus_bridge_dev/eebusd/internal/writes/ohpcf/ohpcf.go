@@ -58,6 +58,10 @@ func (m *Module) Name() string { return useCaseName }
 // HAComponent returns the Home Assistant discovery component.
 func (m *Module) HAComponent() string { return haComponent }
 
+// HAUnit returns "" — OHPCF is exposed as a climate entity (modes/presets),
+// which has no unit of measurement. Implemented to satisfy wucapi.WriteUseCase.
+func (m *Module) HAUnit() string { return "" }
+
 // AvailableActions lists the OHPCF actions exposed to the bridge.
 func (m *Module) AvailableActions() []string {
 	return []string{"schedule", "pause", "resume", "abort"}
