@@ -465,21 +465,24 @@ func prettifySignal(s string) string {
 }
 
 // signalSensorAttrs returns the (unit, device_class, state_class) triple for a
-// non-boolean signal, chosen by signal identity + value type. Falls back to a
-// plain sensor (no class) for unknown signals so they still show up.
+// non-boolean signal. Derived from the value type + wire unit (NOT from the
+// signal name) so the same logic serves any use case — OHPCF, LPC, and future
+// ones — without a growing name list. Falls back to a plain sensor (no class)
+// when the type/unit do not map to a known HA class.
 func signalSensorAttrs(signal, valueType, wireUnit string) (unit, class, stateClass string) {
-	switch signal {
-	case "requested_power", "max_power":
-		// Power in watts.
-		return "W", "power", "measurement"
-	case "start_time":
+	switch valueType {
+	case "date_time":
 		// An absolute instant in time.
 		return "", "timestamp", ""
-	case "min_run_duration", "min_pause_duration":
+	case "duration":
 		// Duration expressed in minutes (the HA duration unit).
 		return "min", "duration", "measurement"
+	case "number":
+		// Derive the device class from the unit. W → power, A → current, V →
+		// voltage, etc. reuse the measurement-side helper.
+		return wireUnit, deviceClassFor("", wireUnit), "measurement"
 	}
-	// Unknown signal: fall back to the wire unit + no class.
+	// Unknown value type: fall back to the wire unit + no class.
 	return wireUnit, "", ""
 }
 

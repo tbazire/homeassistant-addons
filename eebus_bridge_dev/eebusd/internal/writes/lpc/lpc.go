@@ -24,6 +24,7 @@ package lpc
 
 import (
 	"fmt"
+	"time"
 
 	"eebusd/internal/writes/wucapi"
 	"github.com/enbility/eebus-go/api"
@@ -48,8 +49,9 @@ const (
 // wucapi.WriteUseCase and holds the underlying eebus-go *lpc.LPC once Bind
 // has been called.
 type Module struct {
-	impl    *lpc.LPC
-	eventCB wucapi.EventCallback
+	impl     *lpc.LPC
+	eventCB  wucapi.EventCallback
+	signalCB wucapi.SignalCallback
 }
 
 func init() {
@@ -77,31 +79,107 @@ func (m *Module) AvailableActionsForEntity(spineapi.EntityRemoteInterface) []str
 // subscribes to its events. After Bind, UseCase() returns a non-nil value and
 // the use case is ready to be added to the service.
 //
-// LPC exposes no read signals today (its read getters — ConsumptionLimit,
-// ConsumptionNominalMax — are left for a future lot), so only the Event
-// callback is wired; the Signal callback is intentionally unused.
+// Two callbacks are wired:
+//   - cbs.Event fires on compatibility changes → the daemon emits a
+//     "controllable" line (the HA number entity).
+//   - cbs.Signal fires on each LPC data-update event → the daemon emits
+//     "uc_signal" lines so the bridge exposes the value as a sensor.
 func (m *Module) Bind(localEntity spineapi.EntityLocalInterface, cbs wucapi.Callbacks) {
 	if localEntity == nil {
 		return
 	}
 	m.eventCB = cbs.Event
+	m.signalCB = cbs.Signal
 	cb := api.EntityEventCallback(func(ski string, _ spineapi.DeviceRemoteInterface, entity spineapi.EntityRemoteInterface, event api.EventType) {
-		// Only forward the "support updated" event: this is when the set of
-		// remote entities compatible with LPC changed (a device just announced
-		// support, or revoked it).
-		if event != lpc.UseCaseSupportUpdate {
-			return
-		}
-		if cbs.Event != nil {
-			cbs.Event(ski, entity)
+		switch event {
+		case lpc.UseCaseSupportUpdate:
+			if cbs.Event != nil {
+				cbs.Event(ski, entity)
+			}
+		default:
+			if cbs.Signal == nil {
+				return
+			}
+			m.forwardSignal(ski, entity, event, cbs.Signal)
 		}
 	})
 	m.impl = lpc.NewLPC(localEntity, cb)
 }
 
-// EmitSignals is a no-op for LPC: this use case does not expose read signals
-// yet (see Bind). Implemented to satisfy wucapi.WriteUseCase.
-func (m *Module) EmitSignals(string, spineapi.EntityRemoteInterface) {}
+// EmitSignals pushes the current LPC read-signal values for one entity through
+// the Signal callback registered in Bind. Called by the daemon once when a
+// remote entity becomes compatible, so the bridge gets an initial snapshot
+// instead of waiting for the first device notification.
+func (m *Module) EmitSignals(ski string, entity spineapi.EntityRemoteInterface) {
+	if m.impl == nil || entity == nil || m.signalCB == nil {
+		return
+	}
+	for _, event := range lpcDataUpdateEvents {
+		m.forwardSignal(ski, entity, event, m.signalCB)
+	}
+}
+
+// lpcDataUpdateEvents is the set of LPC data-update events we expose as read
+// signals. Scenario 1 (the obligation limit) and Scenario 2 (failsafe limit +
+// duration) are the user-visible configuration values; Scenario 4 is the
+// device's nominal max (its rated power ceiling). Heartbeat (Scenario 3) is
+// not surfaced as a sensor.
+var lpcDataUpdateEvents = []api.EventType{
+	lpc.DataUpdateLimit,
+	lpc.DataUpdateFailsafeConsumptionActivePowerLimit,
+	lpc.DataUpdateFailsafeDurationMinimum,
+	lpc.DataUpdatePowerConsumptionNominalMax,
+}
+
+// forwardSignal maps one LPC data-update event to its read signal, re-queries
+// the underlying getter, and invokes cb with the typed value. On any error or
+// absent value it is a no-op (the signal stays silent until real data arrives).
+func (m *Module) forwardSignal(ski string, entity spineapi.EntityRemoteInterface, event api.EventType, cb wucapi.SignalCallback) {
+	if m.impl == nil || entity == nil || cb == nil {
+		return
+	}
+	switch event {
+	case lpc.DataUpdateLimit:
+		limit, err := m.impl.ConsumptionLimit(entity)
+		if err == nil && limit.IsActive {
+			emitNumber(cb, ski, entity, "consumption_limit", limit.Value, nil, "W")
+		}
+	case lpc.DataUpdateFailsafeConsumptionActivePowerLimit:
+		v, err := m.impl.FailsafeConsumptionActivePowerLimit(entity)
+		emitNumber(cb, ski, entity, "failsafe_power_limit", v, err, "W")
+	case lpc.DataUpdateFailsafeDurationMinimum:
+		v, err := m.impl.FailsafeDurationMinimum(entity)
+		emitDuration(cb, ski, entity, "failsafe_duration_min", v, err)
+	case lpc.DataUpdatePowerConsumptionNominalMax:
+		v, err := m.impl.ConsumptionNominalMax(entity)
+		emitNumber(cb, ski, entity, "nominal_max", v, err, "W")
+	}
+}
+
+// emit / emitNumber / emitDuration are thin formatters shared with the OHPCF
+// module's shape: they skip the signal when the value is not available (err !=
+// nil), so a not-yet-known signal simply stays silent rather than publishing a
+// meaningless value.
+func emit(cb wucapi.SignalCallback, ski string, entity spineapi.EntityRemoteInterface, signal, value, valueType, unit string) {
+	if value == "" {
+		return
+	}
+	cb(ski, entity, signal, value, valueType, unit)
+}
+
+func emitNumber(cb wucapi.SignalCallback, ski string, entity spineapi.EntityRemoteInterface, signal string, v float64, err error, unit string) {
+	if err != nil {
+		return
+	}
+	emit(cb, ski, entity, signal, formatWatts(v), "number", unit)
+}
+
+func emitDuration(cb wucapi.SignalCallback, ski string, entity spineapi.EntityRemoteInterface, signal string, d time.Duration, err error) {
+	if err != nil {
+		return
+	}
+	emit(cb, ski, entity, signal, fmt.Sprintf("%d", int64(d.Seconds())), "duration", "seconds")
+}
 
 // UseCase returns the underlying eebus-go use case, ready for svc.AddUseCase.
 func (m *Module) UseCase() api.UseCaseInterface {

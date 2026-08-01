@@ -23,6 +23,50 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.6.1-dev] - 2026-08-01
+
+Follow-up to 0.6.0-dev: the LPC use case now exposes its **read signals** as
+Home Assistant sensors, reusing the `uc_signal` plumbing introduced for OHPCF.
+Until now LPC only exposed the `number` control entity (the consumption-limit
+setpoint in W); the four observability values the Energy Guard reads back were
+queried by eebus-go but never forwarded. They now appear as typed sensors
+attached to the same device + entity, with **no bridge change required** — the
+generic `OnUcSignal` discovery (value-type + unit driven) added in 0.6.0-dev
+handles them directly.
+
+### Added
+
+- **LPC now exposes 4 sensors** per compatible entity:
+  - `consumption_limit` → sensor `power` (W, state_class measurement) — only
+    emitted when a limit is currently active (SPINE `IsActive=true`).
+  - `failsafe_power_limit` → sensor `power` (W) — the failsafe active-power
+    cap that takes over in init/failsafe state.
+  - `nominal_max` → sensor `power` (W) — the device's contractual/rated
+    consumption ceiling (CEM → contractual nominal max; other entities →
+    power-consumption nominal max).
+  - `failsafe_duration_min` → sensor `duration` (min; wire seconds are
+    converted to minutes) — the minimum time the device stays in failsafe.
+  The sensors share the HA device of the `number` control entity.
+
+### Changed
+
+- The LPC module's `Bind`/`EmitSignals` are no longer no-ops (the placeholder
+  noted in 0.6.0-dev's "Architecture" section). `Bind` forwards the four LPC
+  data-update events; `EmitSignals` publishes the initial snapshot when a
+  device becomes compatible, so HA does not show "unknown" before the first
+  device notification.
+- The `TestFormatWatts` regression table was kept (it pins the wire contract
+  shared by the initial state publish and the number-signal value formatting);
+  an `EmitSignals` nil-safe guard test was added.
+
+### Notes
+
+- No command surface was added: this lot is read-only and does not change
+  `write.enable` semantics. The LPC `set`/`clear` write actions are unchanged.
+- The bridge discovery remains generic: the same `signalSensorAttrs` path
+  serves OHPCF and LPC (and any future use case) purely from the value type
+  and unit, with no per-use-case signal names.
+
 ## [0.6.0-dev] - 2026-07-30
 
 This release exposes the **OHPCF read signals** as Home Assistant sensors. Until
