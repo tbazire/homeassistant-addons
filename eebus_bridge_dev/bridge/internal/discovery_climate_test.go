@@ -208,19 +208,26 @@ func TestDecodeHACommand_UnknownPayload(t *testing.T) {
 
 func TestOnControllable_Number_LPC(t *testing.T) {
 	// LPC exposes a number entity (power limit in watts). Verify the discovery
-	// payload, topic layout and command topic subscription.
+	// payload, topic layout, command topic subscription and the optional
+	// min/max/step range propagated from c.Range.
 	m := NewMapper("eebus", "homeassistant")
 	ski := "aaaabbbbccccddddeeee00001111222233334444"
 	m.OnManufacturer(&Manufacturer{Line: Line{SKI: ski}, BrandName: "SD", DeviceName: "VR920"})
 
+	maxV := 8000.0
 	c := &Controllable{
 		Line:       Line{SKI: ski, Entity: "1.1"},
 		EntityType: "HeatPumpAppliance",
 		UseCase:    "lpc",
 		Component:  "number",
 		Unit:       "W",
-		Actions:    []string{"set", "clear"},
-		State:      "1500",
+		Range: &NumberRange{
+			Min:  0,
+			Max:  &maxV,
+			Step: 1,
+		},
+		Actions: []string{"set", "clear"},
+		State:   "1500",
 	}
 	disc := m.OnControllable(c)
 	if disc.Config == nil {
@@ -259,6 +266,42 @@ func TestOnControllable_Number_LPC(t *testing.T) {
 	// Initial state passes through verbatim (the watts value).
 	if disc.StateValue != "1500" {
 		t.Errorf("state value = %q, want 1500", disc.StateValue)
+	}
+
+	// Range must be propagated: min/max/step from c.Range.
+	if nb.Min == nil || *nb.Min != 0 {
+		t.Errorf("Min = %v, want 0", nb.Min)
+	}
+	if nb.Max == nil || *nb.Max != 8000 {
+		t.Errorf("Max = %v, want 8000", nb.Max)
+	}
+	if nb.Step == nil || *nb.Step != 1 {
+		t.Errorf("Step = %v, want 1", nb.Step)
+	}
+}
+
+func TestOnControllable_Number_NoRange(t *testing.T) {
+	// When c.Range is nil (device did not advertise a ceiling), the number MUST
+	// be published without min/max/step so HA does not fall back to its default
+	// cap of 100. This is the VR920 case: nominal_max is not exposed.
+	m := NewMapper("eebus", "homeassistant")
+	ski := "aaaabbbbccccddddeeee00001111222233334444"
+	c := &Controllable{
+		Line:      Line{SKI: ski, Entity: "1.1"},
+		UseCase:   "lpc",
+		Component: "number",
+		Unit:      "W",
+		Actions:   []string{"set"},
+		State:     "1500",
+		// Range intentionally nil.
+	}
+	disc := m.OnControllable(c)
+	if disc.Config == nil {
+		t.Fatal("OnControllable must publish a discovery for number")
+	}
+	nb := disc.Config.(*HANumber)
+	if nb.Min != nil || nb.Max != nil || nb.Step != nil {
+		t.Errorf("range fields must be nil when c.Range is nil, got Min=%v Max=%v Step=%v", nb.Min, nb.Max, nb.Step)
 	}
 }
 

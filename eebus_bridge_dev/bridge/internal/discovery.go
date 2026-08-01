@@ -320,6 +320,12 @@ func (m *Mapper) OnControllable(c *Controllable) Discovery {
 		// the use case (carried in c.Unit). A single value topic carries the
 		// current limit and receives user input; the orchestrator's
 		// decodeHACommand routes "/value/cmd" payloads to <uc>.set.
+		//
+		// The optional min/max/step come from c.Range. When the device
+		// advertised a ceiling (Range.Max != nil) the HA slider is bounded to
+		// the real hardware capability; when Range is nil or has no max, the
+		// number is published unbounded so HA does NOT fall back to its
+		// default cap of 100 (which would silently prevent legitimate values).
 		disc.ConfigTopic = fmt.Sprintf("%s/number/eebus_bridge/%s/config", m.discovery, uid)
 		valueState := fmt.Sprintf("%s/%s/%s/%s/value/state", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
 		valueCmd := fmt.Sprintf("%s/%s/%s/%s/value/cmd", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
@@ -330,6 +336,11 @@ func (m *Mapper) OnControllable(c *Controllable) Discovery {
 			StateTopic:        valueState,
 			UnitOfMeasurement: c.Unit,
 			Device:            dev,
+		}
+		if c.Range != nil {
+			number.Min = &c.Range.Min
+			number.Max = c.Range.Max // nil when unbounded → omitted (omitempty)
+			number.Step = &c.Range.Step
 		}
 		disc.Config = number
 		disc.StateTopic = valueState

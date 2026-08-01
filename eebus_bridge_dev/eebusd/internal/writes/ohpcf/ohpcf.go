@@ -63,6 +63,13 @@ func (m *Module) HAComponent() string { return haComponent }
 // which has no unit of measurement. Implemented to satisfy wucapi.WriteUseCase.
 func (m *Module) HAUnit() string { return "" }
 
+// NumberRangeForEntity returns nil — OHPCF is a climate entity (modes/presets),
+// not a numeric setpoint, so it has no min/max/step range. Implemented to
+// satisfy wucapi.WriteUseCase.
+func (m *Module) NumberRangeForEntity(spineapi.EntityRemoteInterface) *wucapi.NumberRange {
+	return nil
+}
+
 // AvailableActionsForEntity lists the OHPCF actions the given entity actually
 // supports. "schedule" is always offered (it is the core scheduling verb and
 // the device has already advertised the OHPCF scenarios to reach this point).

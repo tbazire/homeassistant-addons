@@ -320,8 +320,9 @@ func (a *App) onWriteUseCaseEvent(ski string, entity spineapi.EntityRemoteInterf
 		}
 		actions := uc.AvailableActionsForEntity(entity)
 		state := uc.EntityState(entity)
+		rng := uc.NumberRangeForEntity(entity)
 		if a.cfg.JSONOut {
-			a.emitControllable(ski, addr, entType, uc.Name(), uc.HAComponent(), uc.HAUnit(), actions, state)
+			a.emitControllable(ski, addr, entType, uc.Name(), uc.HAComponent(), uc.HAUnit(), actions, state, rng)
 		} else {
 			AppLog.Infof("controllable: ski=%s entity=%s usecase=%s actions=%v state=%s",
 				maskSKI(ski), addr, uc.Name(), actions, state)
@@ -411,22 +412,42 @@ func (a *App) emitSignal(ski, addr, uc, signal, value, valueType, unit string) {
 
 // emitControllable writes one "controllable" NDJSON line on stdout. Used in
 // -json mode so the bridge can create the matching HA control entity.
-func (a *App) emitControllable(ski, addr, entityType, uc, component, unit string, actions []string, state string) {
+//
+// rng carries the optional input range for number-like components (min/max/
+// step). It is serialized as a nested "range" object when non-nil, and omitted
+// entirely otherwise (legacy behavior). The max field is itself optional within
+// the range: a NumberRange with HasMax=false publishes min+step only, so the
+// bridge leaves the HA number unbounded.
+func (a *App) emitControllable(ski, addr, entityType, uc, component, unit string, actions []string, state string, rng *wucapi.NumberRange) {
 	// Built here (not in the writes package) because the wire format belongs
 	// to the daemon's presentation layer, not the writes domain.
+	type rangeLine struct {
+		Min  float64  `json:"min"`
+		Max  *float64 `json:"max,omitempty"`
+		Step float64  `json:"step"`
+	}
 	type controllableLine struct {
-		Kind       string   `json:"kind"`
-		SKI        string   `json:"ski"`
-		Entity     string   `json:"entity"`
-		EntityType string   `json:"entity_type,omitempty"`
-		UseCase    string   `json:"usecase"`
-		Component  string   `json:"component"`
-		Unit       string   `json:"unit,omitempty"`
-		Actions    []string `json:"actions"`
-		State      string   `json:"state,omitempty"`
+		Kind       string     `json:"kind"`
+		SKI        string     `json:"ski"`
+		Entity     string     `json:"entity"`
+		EntityType string     `json:"entity_type,omitempty"`
+		UseCase    string     `json:"usecase"`
+		Component  string     `json:"component"`
+		Unit       string     `json:"unit,omitempty"`
+		Range      *rangeLine `json:"range,omitempty"`
+		Actions    []string   `json:"actions"`
+		State      string     `json:"state,omitempty"`
 	}
 	if actions == nil {
 		actions = []string{}
+	}
+	var rangeWire *rangeLine
+	if rng != nil {
+		rangeWire = &rangeLine{Min: rng.Min, Step: rng.Step}
+		if rng.HasMax {
+			max := rng.Max
+			rangeWire.Max = &max
+		}
 	}
 	line := controllableLine{
 		Kind:       "controllable",
@@ -436,6 +457,7 @@ func (a *App) emitControllable(ski, addr, entityType, uc, component, unit string
 		UseCase:    uc,
 		Component:  component,
 		Unit:       unit,
+		Range:      rangeWire,
 		Actions:    actions,
 		State:      state,
 	}

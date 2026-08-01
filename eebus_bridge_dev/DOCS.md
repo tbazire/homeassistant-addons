@@ -225,6 +225,14 @@ and the bridge log explains the reason under `command result status=error`.
 > use case module and carried through to HA discovery, so the slider is
 > labelled correctly for any device family.
 
+> ℹ️ **Input range.** When the device advertises a nominal maximum consumption
+> (LPC Scenario 4), the slider's `max` is set to that value so you cannot
+> request more than the hardware can draw. When the device does not expose a
+> nominal max (e.g. the Saunier Duval VR920), the number is published without a
+> `max` — the field is then free-form and the device itself rejects out-of-range
+> values via SPINE. In both cases `min` is 0 (a negative power limit has no
+> SPINE meaning) and the step is 1 W.
+
 In addition to the `number` control entity, LPC exposes **read-only sensors**
 from the data the controllable system advertises. They attach to the same device
 and entity as the `number` entity:

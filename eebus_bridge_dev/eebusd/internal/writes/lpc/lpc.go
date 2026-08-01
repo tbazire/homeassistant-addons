@@ -67,6 +67,34 @@ func (m *Module) HAComponent() string { return haComponent }
 // HAUnit returns the Home Assistant unit of measurement for the limit value.
 func (m *Module) HAUnit() string { return haUnit }
 
+// NumberRangeForEntity returns the valid input range for the LPC number entity.
+// The ceiling (max) is derived from the device's advertised nominal maximum
+// consumption (Scenario 4) when available, so the HA slider reflects the real
+// hardware capability instead of HA's default cap of 100 W.
+//
+// When the device does not expose a nominal max (e.g. the VR920 does not
+// advertise the ElectricalConnection characteristic for LPC), nil is returned:
+// the bridge then publishes the number without a max, letting the user enter
+// any value while the device itself rejects out-of-range limits via SPINE.
+// Min is always 0 (a negative active-power limit has no SPINE meaning) and the
+// step is 1 W (a sensible finest granularity for a power cap).
+func (m *Module) NumberRangeForEntity(entity spineapi.EntityRemoteInterface) *wucapi.NumberRange {
+	if m.impl == nil || entity == nil {
+		return nil
+	}
+	max, err := m.impl.ConsumptionNominalMax(entity)
+	if err != nil || max <= 0 {
+		// No device-side ceiling known → unbounded number (free-form input).
+		return nil
+	}
+	return &wucapi.NumberRange{
+		Min:    0,
+		Max:    max,
+		Step:   1,
+		HasMax: true,
+	}
+}
+
 // AvailableActionsForEntity lists the LPC actions the given entity supports.
 // LPC has no per-entity capability flags (any entity advertising the LPC
 // scenarios accepts setting and clearing a consumption limit), so the static

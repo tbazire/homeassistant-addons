@@ -100,21 +100,36 @@ type Diagnosis struct {
 	UpTime         string `json:"up_time,omitempty"`
 }
 
+// NumberRange is the optional input range for a number-like control entity
+// (LPC power limit, …). It mirrors wucapi.NumberRange on the wire; duplicated
+// here so the bridge keeps zero import dependency on eebusd (same rationale as
+// the other kind structs). Max is a pointer so it can be absent (unbounded
+// number) while Min/Step stay present: when Max is nil the HA number entity is
+// published without a max, letting the user enter any value.
+type NumberRange struct {
+	Min  float64  `json:"min"`
+	Max  *float64 `json:"max,omitempty"`
+	Step float64  `json:"step"`
+}
+
 // Controllable is an INBOUND line (eebusd → bridge) announcing that a remote
 // entity accepts one or more write actions for a given use case. The bridge
 // uses it to create the matching HA control entity (climate/number/switch/...).
 // Component is the HA discovery component to build ("climate", "number", …),
 // declared by the use case itself so the bridge stays agnostic. Unit is the
 // Home Assistant unit of measurement for number-like components ("W", "A", …);
-// empty for climate/switch/select.
+// empty for climate/switch/select. Range carries the optional min/max/step for
+// number components (nil for climate/switch/select or when the device does not
+// advertise a ceiling).
 type Controllable struct {
 	Line
-	EntityType string   `json:"entity_type,omitempty"`
-	UseCase    string   `json:"usecase"`
-	Component  string   `json:"component"`
-	Unit       string   `json:"unit,omitempty"`
-	Actions    []string `json:"actions"`
-	State      string   `json:"state,omitempty"`
+	EntityType string       `json:"entity_type,omitempty"`
+	UseCase    string       `json:"usecase"`
+	Component  string       `json:"component"`
+	Unit       string       `json:"unit,omitempty"`
+	Range      *NumberRange `json:"range,omitempty"`
+	Actions    []string     `json:"actions"`
+	State      string       `json:"state,omitempty"`
 }
 
 // CommandResult is an INBOUND line (eebusd → bridge) reporting the outcome of

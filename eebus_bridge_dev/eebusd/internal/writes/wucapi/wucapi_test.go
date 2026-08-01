@@ -28,6 +28,9 @@ type fakeUseCase struct {
 func (f *fakeUseCase) Name() string        { return f.name }
 func (f *fakeUseCase) HAComponent() string { return f.comp }
 func (f *fakeUseCase) HAUnit() string      { return "" }
+func (f *fakeUseCase) NumberRangeForEntity(spineapi.EntityRemoteInterface) *NumberRange {
+	return nil
+}
 func (f *fakeUseCase) AvailableActionsForEntity(spineapi.EntityRemoteInterface) []string {
 	return f.actions
 }
