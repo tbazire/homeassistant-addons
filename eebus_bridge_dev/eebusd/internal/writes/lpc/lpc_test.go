@@ -59,6 +59,16 @@ func TestEmitSignalsNilSafe(t *testing.T) {
 	m.EmitSignals("ski", nil) // nil entity + no impl → returns immediately
 }
 
+func TestModuleNumberRangeNilSafe(t *testing.T) {
+	// Before Bind (m.impl == nil) or with a nil entity, NumberRangeForEntity
+	// must return nil (no panic). This guards the daemon's initial-announce
+	// path, which calls NumberRangeForEntity on every compatible entity.
+	m := &Module{}
+	if r := m.NumberRangeForEntity(nil); r != nil {
+		t.Errorf("NumberRangeForEntity(nil) = %v, want nil before Bind", r)
+	}
+}
+
 func TestFormatWatts(t *testing.T) {
 	// The watts formatter is the wire contract for the initial state publish:
 	// integer watts have no decimal point, fractional watts are trimmed.

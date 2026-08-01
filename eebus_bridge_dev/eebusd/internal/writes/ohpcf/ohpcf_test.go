@@ -118,3 +118,12 @@ func TestModuleRegisteredInGlobalRegistry(t *testing.T) {
 		t.Fatal("module name is empty")
 	}
 }
+
+func TestModuleNumberRangeAlwaysNil(t *testing.T) {
+	// OHPCF is a climate entity (modes/presets), not a numeric setpoint, so
+	// NumberRangeForEntity must always return nil regardless of the entity.
+	m := &Module{}
+	if r := m.NumberRangeForEntity(nil); r != nil {
+		t.Errorf("NumberRangeForEntity = %v, want nil (climate has no range)", r)
+	}
+}

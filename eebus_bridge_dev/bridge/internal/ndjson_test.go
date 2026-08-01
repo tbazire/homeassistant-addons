@@ -207,3 +207,51 @@ func TestParserKeepsNegativeValue(t *testing.T) {
 		t.Errorf("value = %v, want -1234.5", *got[0].Measurement.Value)
 	}
 }
+
+// TestParserControllableWithRange parses a "controllable" line carrying the
+// optional "range" object and asserts min/max/step are decoded correctly. The
+// max pointer distinguishes a bounded number (max present) from an unbounded
+// one (max absent — the VR920 case where nominal_max is not exposed).
+func TestParserControllableWithRange(t *testing.T) {
+	ski := "aaaabbbbccccddddeeee00001111222233334444"
+	in := `{"kind":"controllable","ski":"` + ski + `","entity":"1.1","usecase":"lpc","component":"number","unit":"W","range":{"min":0,"max":8000,"step":1},"actions":["set","clear"],"state":"1500"}`
+	p := NewParser(strings.NewReader(in), fakeLogger{})
+
+	var got []Event
+	if err := p.Stream(func(ev Event) { got = append(got, ev) }); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if len(got) != 1 || got[0].Controllable == nil {
+		t.Fatalf("expected 1 controllable event, got %+v", got)
+	}
+	c := got[0].Controllable
+	if c.Range == nil {
+		t.Fatal("range not parsed")
+	}
+	if c.Range.Min != 0 || c.Range.Step != 1 {
+		t.Errorf("range min/step = %v/%v, want 0/1", c.Range.Min, c.Range.Step)
+	}
+	if c.Range.Max == nil || *c.Range.Max != 8000 {
+		t.Errorf("range max = %v, want 8000", c.Range.Max)
+	}
+}
+
+// TestParserControllableWithoutRange asserts the legacy wire format (no
+// "range" field) still parses, with Range left nil — the bridge then publishes
+// an unbounded number. Guards backward compatibility with older eebusd builds.
+func TestParserControllableWithoutRange(t *testing.T) {
+	ski := "aaaabbbbccccddddeeee00001111222233334444"
+	in := `{"kind":"controllable","ski":"` + ski + `","entity":"1.1","usecase":"lpc","component":"number","unit":"W","actions":["set"],"state":"1500"}`
+	p := NewParser(strings.NewReader(in), fakeLogger{})
+
+	var got []Event
+	if err := p.Stream(func(ev Event) { got = append(got, ev) }); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if len(got) != 1 || got[0].Controllable == nil {
+		t.Fatalf("expected 1 controllable event, got %+v", got)
+	}
+	if got[0].Controllable.Range != nil {
+		t.Errorf("range = %v, want nil when field absent", got[0].Controllable.Range)
+	}
+}

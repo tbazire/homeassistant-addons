@@ -23,6 +23,54 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.6.2-dev] - 2026-08-01
+
+Follow-up to 0.6.1-dev: the LPC `number` entity (the power-limit setpoint in
+watts) was silently capped at **100 W** because it was published without a
+`max`, and Home Assistant falls back to `max=100` whenever a number entity omits
+one. This made legitimate limits (a heat pump easily draws thousands of watts)
+impossible to set from the HA UI. The wire contract now carries an optional
+input range so the slider reflects the device's real capability — or is left
+unbounded when the device does not advertise a ceiling.
+
+### Fixed
+
+- **LPC power-limit slider is no longer capped at 100 W.** The `number` entity
+  advertised no `min`/`max`/`step`, so HA applied its built-in default
+  (`max=100`). The `controllable` NDJSON line now carries an optional `range`
+  object (`{min, max?, step}`); the bridge propagates it to the HA number
+  payload. When the device exposes a nominal maximum consumption (LPC Scenario
+  4), the slider max is set to that value; otherwise the number is published
+  without a max (free-form input) and the device itself rejects out-of-range
+  values via SPINE. This is the case on the VR920, which does not expose the
+  `ElectricalConnection` characteristic for LPC.
+
+### Changed
+
+- **Wire contract: `controllable` gained an optional `range` field**
+  (eebusd → bridge). It is a nested object `{min, max?, step}`; `max` is itself
+  optional within the range (absent ⇒ unbounded number). The field is omitted
+  entirely for non-number components and for number use cases that return no
+  range — so the change is fully backward compatible: an older bridge ignores
+  the unknown field, and an older eebusd simply does not emit it.
+- **`WriteUseCase` interface gained `NumberRangeForEntity(entity)`** returning
+  `*NumberRange` (nil when the use case does not constrain its input). LPC
+  derives the max from the device's nominal max; OHPCF returns nil (climate
+  entity, not a numeric setpoint). Future numeric use cases (LPP, OPEV) will
+  reuse the same path.
+
+### Notes
+
+- On devices that DO expose `nominal_max`, the slider is now bounded to the
+  device's rated consumption ceiling. On devices that do not (VR920 today), the
+  number is unbounded — the operator can enter any value and the device's SPINE
+  layer is the final authority on what it accepts.
+- No new configuration option: the range is derived from the device's own
+  advertisement, keeping the add-on zero-config per the generic-first rule.
+- The OHPCF `schedule` "data not available" behavior is unchanged and expected
+  (the device advertises no power sequence when no flexible consumption process
+  is available).
+
 ## [0.6.1-dev] - 2026-08-01
 
 Follow-up to 0.6.0-dev: the LPC use case now exposes its **read signals** as
@@ -434,7 +482,9 @@ OHPCF), with an architecture designed to grow without touching the bridge.
 - The code source is intentionally kept identical to the production add-on
   at fork time. Future dev-only changes will be listed here.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.0...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.2...HEAD
+[0.6.2-dev]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.1...dev-v0.6.2
+[0.6.1-dev]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.0...dev-v0.6.1
 [0.6.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.6.0
 [0.5.1-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.5.1
 [0.5.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.5.0

@@ -38,6 +38,27 @@ type Args struct {
 	Unit string
 }
 
+// NumberRange describes the valid input range for a number-like control entity
+// (LPC power limit, a future current-limit use case, …). It is surfaced to the
+// bridge so the Home Assistant number entity can advertise min/max/step instead
+// of falling back to HA's default (max=100), which artificially caps the input.
+//
+// HasMax distinguishes "the device published a real ceiling" from "no ceiling
+// is known": when HasMax is false the bridge MUST omit max entirely (HA then
+// treats the number as an unbounded free-form input, and the device itself
+// rejects out-of-range values via SPINE). Min and Step are always meaningful
+// for a number entity and are published as-is.
+//
+// A nil *NumberRange (returned by NumberRangeForEntity) means the use case does
+// not constrain its input at all — the bridge publishes no min/max/step, which
+// is the legacy behavior for use cases that do not implement a range.
+type NumberRange struct {
+	Min    float64
+	Max    float64
+	Step   float64
+	HasMax bool
+}
+
 // ResultStatus is the outcome of a dispatched command.
 type ResultStatus string
 
@@ -79,6 +100,14 @@ type WriteUseCase interface {
 	// climate/switch/select ignore it (return ""). Declared by the use case so
 	// the bridge stays agnostic of the physical quantity being controlled.
 	HAUnit() string
+
+	// NumberRangeForEntity returns the valid input range for a number-like
+	// control entity, or nil when the use case does not constrain its input
+	// (climate/switch/select use cases, or a number use case whose device-side
+	// ceiling is not known). The daemon forwards a non-nil range to the bridge
+	// so the HA number entity advertises min/max/step; a nil return leaves the
+	// number unbounded (legacy behavior). See NumberRange for the HasMax rule.
+	NumberRangeForEntity(entity spineapi.EntityRemoteInterface) *NumberRange
 
 	// AvailableActionsForEntity lists the action verbs this use case accepts in
 	// Dispatch for the given entity (e.g. ["schedule","pause","resume","abort"]).
