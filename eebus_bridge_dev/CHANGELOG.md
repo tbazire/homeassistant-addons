@@ -23,6 +23,46 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.6.3-dev] - 2026-08-01
+
+Fixes a stdout write race that produced corrupt NDJSON lines on the bridge
+side. Under realistic load (multiple LPC read signals emitted in a burst when a
+device becomes compatible), the bridge logged:
+
+    WARN ndjson: skipping unparseable line
+    err="invalid character '{' after top-level value"
+
+and dropped the affected `uc_signal` line — which is exactly why some LPC
+sensors occasionally failed to appear.
+
+### Fixed
+
+- **NDJSON lines no longer interleave under concurrent emission.**
+  `emitSignal` and `emitControllable` each performed two separate
+  `os.Stdout.Write` calls (payload, then `"\n"`) with no synchronization. SPINE
+  data-update callbacks fire from multiple goroutines, so the bytes of two
+  lines could interleave and merge into a single `"{...}{...}"` line that the
+  bridge's NDJSON parser rejects. A dedicated `outMu` mutex now serializes
+  every line, and a single `writeLine` helper writes the payload + newline in
+  one `Write` call — the atomic-write guarantee that prevents the split.
+
+### Changed
+
+- **`App` gained an injectable `out io.Writer`** (defaults to `os.Stdout` in
+  `NewApp`). `writeLine` writes through it, so the atomicity contract is now
+  unit-testable without touching the real stdout. No behavior change for
+  production (stdout remains the sink).
+
+### Notes
+
+- The read-side scanner (`scanner/export.go writeJSON`) was already a single
+  `Write(append(b, '\n'))` call per line and was not affected; the race was
+  isolated to the write-side emitters in `app.go`.
+- Regression tests added: `TestWriteLineAtomicUnderConcurrency` (32 goroutines
+  × 50 lines, asserts every line is well-formed) and
+  `TestWriteLineSingleCallPerLine` (one Write per line). Both pass under
+  `-race`.
+
 ## [0.6.2-dev] - 2026-08-01
 
 Follow-up to 0.6.1-dev: the LPC `number` entity (the power-limit setpoint in
@@ -482,7 +522,8 @@ OHPCF), with an architecture designed to grow without touching the bridge.
 - The code source is intentionally kept identical to the production add-on
   at fork time. Future dev-only changes will be listed here.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.2...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.3...HEAD
+[0.6.3-dev]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.2...dev-v0.6.3
 [0.6.2-dev]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.1...dev-v0.6.2
 [0.6.1-dev]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.0...dev-v0.6.1
 [0.6.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.6.0

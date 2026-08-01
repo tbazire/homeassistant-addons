@@ -51,6 +51,18 @@ type App struct {
 	pairingState   map[string]string           // SKI -> human-readable state
 	registeredSKIs map[string]struct{}         // SKIs we already called RegisterRemoteService on
 
+	// outMu serializes writes to the NDJSON output so that lines emitted from
+	// concurrent SPINE goroutines (uc_signal / controllable) never interleave.
+	// Without it, two Write calls per line (payload + "\n") can be split by
+	// another goroutine's write, producing a merged "{...}{...}" line that the
+	// bridge rejects as unparseable. Each emitter must write the whole line in
+	// a single Write call under this lock.
+	outMu sync.Mutex
+	// out is the NDJSON sink (uc_signal, controllable). Defaults to os.Stdout
+	// in NewApp; overridable in tests so writeLine can be exercised without
+	// touching the real stdout.
+	out io.Writer
+
 	// pollCtx/pollCancel drive the per-entity periodic pollers (one goroutine
 	// per remote entity, started in HandleEvent on EntityChange+Add). Cancelling
 	// pollCtx stops all of them at once on Shutdown. The cadence is
@@ -69,6 +81,7 @@ func NewApp(cfg *Config, logger *Logger) *App {
 		logger:         logger,
 		pairingState:   make(map[string]string),
 		registeredSKIs: make(map[string]struct{}),
+		out:            os.Stdout,
 	}
 }
 
@@ -372,6 +385,17 @@ func splitUcSignal(tagged string) (uc, signal string, ok bool) {
 	return "", "", false
 }
 
+// writeLine writes one complete NDJSON line (payload + newline) as a single
+// Write call, serialized by outMu. The single-call guarantee is what prevents
+// concurrent SPINE-goroutine emissions from interleaving bytes and producing
+// corrupt merged lines on the bridge side (each line must be either fully
+// present or absent, never half-written).
+func (a *App) writeLine(payload []byte) {
+	a.outMu.Lock()
+	defer a.outMu.Unlock()
+	_, _ = a.out.Write(append(payload, '\n'))
+}
+
 // emitSignal writes one "uc_signal" NDJSON line on stdout. Used in -json mode
 // so the bridge can create/refresh the matching HA sensor. Empty value means
 // the signal is not (yet) available → skipped.
@@ -406,8 +430,7 @@ func (a *App) emitSignal(ski, addr, uc, signal, value, valueType, unit string) {
 		AppLog.Warnf("emitSignal marshal: %v", err)
 		return
 	}
-	os.Stdout.Write(payload)
-	os.Stdout.Write([]byte("\n"))
+	a.writeLine(payload)
 }
 
 // emitControllable writes one "controllable" NDJSON line on stdout. Used in
@@ -466,8 +489,7 @@ func (a *App) emitControllable(ski, addr, entityType, uc, component, unit string
 		AppLog.Warnf("emitControllable marshal: %v", err)
 		return
 	}
-	os.Stdout.Write(payload)
-	os.Stdout.Write([]byte("\n"))
+	a.writeLine(payload)
 }
 
 // ============================================================================
