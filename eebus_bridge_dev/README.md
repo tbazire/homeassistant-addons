@@ -145,7 +145,9 @@ itself* advertises over SPINE, not a hardcoded list. Two use cases are shipped:
   exposes the `LoadControl` feature (heat pumps, wallboxes, inverters,
   batteries, sub-meters), a `number` entity appears representing the active
   power limit in watts (W). Setting it caps the device's consumption; the
-  entity reflects the device-reported limit.
+  entity reflects the device-reported limit. Read-only sensors (current
+  consumption limit, failsafe power limit, nominal max, failsafe duration) are
+  also exposed alongside it.
 
 | Use case | Typical device | HA entity | Status |
 |----------|----------------|-----------|--------|

@@ -225,6 +225,22 @@ and the bridge log explains the reason under `command result status=error`.
 > use case module and carried through to HA discovery, so the slider is
 > labelled correctly for any device family.
 
+In addition to the `number` control entity, LPC exposes **read-only sensors**
+from the data the controllable system advertises. They attach to the same device
+and entity as the `number` entity:
+
+| Sensor | HA type | Meaning |
+|--------|---------|---------|
+| `consumption_limit` | `sensor` (power, W) | Currently active consumption limit (only emitted when a limit is set) |
+| `failsafe_power_limit` | `sensor` (power, W) | Failsafe active-power cap active in init/failsafe state |
+| `nominal_max` | `sensor` (power, W) | Device's contractual / rated consumption ceiling |
+| `failsafe_duration_min` | `sensor` (duration, min) | Minimum time the device stays in failsafe state |
+
+These are informational (no command surface) and reuse the same generic
+`uc_signal` plumbing as OHPCF: the bridge derives the HA type purely from the
+value type and unit, so any future use case's read signals light up without a
+bridge change.
+
 ## Security review
 
 See [`../SECURITY.md`](../SECURITY.md) for the full threat model and the

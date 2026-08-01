@@ -52,6 +52,13 @@ func TestModuleDispatchBeforeBindErrors(t *testing.T) {
 	}
 }
 
+func TestEmitSignalsNilSafe(t *testing.T) {
+	// Before Bind, EmitSignals must be a no-op (no panic). Guards the
+	// initial-announce path in the daemon.
+	m := &Module{}
+	m.EmitSignals("ski", nil) // nil entity + no impl → returns immediately
+}
+
 func TestFormatWatts(t *testing.T) {
 	// The watts formatter is the wire contract for the initial state publish:
 	// integer watts have no decimal point, fractional watts are trimmed.
