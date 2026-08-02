@@ -23,6 +23,90 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.6.5-dev] - 2026-08-01
+
+Fixes a two-sided bug that left the OHPCF climate entity's state (the
+compressor's action: `heating` / `idle` / `off`) frozen at its discovery value
+forever. After the initial announcement the climate entity never tracked the
+device again, even when the compressor started, paused or stopped.
+
+### Root cause
+
+Two independent defects, one in each binary, both needed to reproduce:
+
+1. **Daemon (`eebusd`)** — the OHPCF module routed only `UseCaseSupportUpdate`
+   (device announces/revokes OHPCF support) to the controllable-emission path.
+   The compressor's runtime state transitions arrive as
+   `DataUpdateConsumptionState` events, which were swallowed by a deliberate
+   no-op in `forwardSignal` on the assumption that "the state is already
+   reflected on the climate entity's action topic". Nothing reflected it: the
+   event was received and dropped. `UseCaseSupportUpdate` is change-gated by
+   `slices.Compare` in eebus-go and fires only at announce/revoke, never on a
+   state transition, so the controllable line was never re-emitted.
+
+2. **Bridge** — `OnControllable` *did* compute a correct refresh payload
+   (`StateTopic`/`StateValue`/`ActionTopic`/`ActionValue`, with
+   `Config == nil` to avoid re-publishing discovery) on subsequent calls. But
+   the orchestrator guarded every `publishState` call for controllables inside
+   `if disc.Config != nil`, so refresh payloads were computed and then
+   silently dropped — unlike `measurement` and `uc_signal`, which publish
+   state unconditionally.
+
+The underlying SPINE layer (spine-go) confirmed correct: `processNotify`/
+`processReply`/`processWrite` publish a data-change event on every received
+message, and OHPCF fires `DataUpdateConsumptionState` whenever the payload
+carries a non-nil `PowerSequence.State` — i.e. on every real transition.
+
+### Fixed
+
+- **OHPCF climate entity now tracks the compressor in real time.** The OHPCF
+  module routes `DataUpdateConsumptionState` to the controllable-emission
+  callback (the same path as `UseCaseSupportUpdate`), so a state transition
+  re-runs `EntityState` → `emitControllable` and the bridge republishes the
+  climate entity's `action/state` (and `mode/state`) topics.
+- **Per-entity state deduplication** (`recordStateTransition`) suppresses
+  redundant refreshes: spine-go does not diff, so it re-fires
+  `DataUpdateConsumptionState` on every notify that carries a `State` — even
+  when the value is unchanged. The module now caches the last mapped action
+  per `(ski, entity)` and emits only on a genuine change, preventing an MQTT
+  refresh storm from periodic device notifies. The dedup is "changed since
+  last publish", so a `running → paused → running` cycle emits all three.
+- **Bridge republishes controllable state on every line, not just discovery.**
+  `publishState(State)` and `publishState(Action)` are now called outside the
+  `if disc.Config != nil` guard in the orchestrator, mirroring how
+  `measurement` and `uc_signal` already behave. Discovery + command-topic
+  subscription remain gated (first announcement only).
+
+### Changed
+
+- `ohpcf.Bind` callback switch: `DataUpdateConsumptionState` is now an
+  explicit case routed to `cbs.Event` (was a no-op reached only via
+  `forwardSignal`). The `forwardSignal` switch still lists it for
+  exhaustiveness but it is no longer reachable from the bind path.
+- `Module` gains a `lastState map[string]string` cache guarded by a mutex
+  (the bind callback may fire from several SPINE reader goroutines).
+
+### Tests
+
+- `ohpcf_test.go`: `TestRecordStateTransition_Dedup` (first emit, identical
+  suppressed, transition emits, back-transition emits),
+  `TestRecordStateTransition_EmptyIgnored` (empty/unmapped state never
+  clears the cache or blanks the entity), `TestRecordStateTransition_Per
+  EntityIsolation` (two compressors dedup independently),
+  `TestEntityStateKeyFormat` (nil-entity fallback).
+- `discovery_climate_test.go`:
+  `TestOnControllable_Climate_StateRefreshUpdatesAction` — pins the mapper
+  half of the fix: a second `OnControllable` call with a different `State`
+  must return updated `ActionValue`/`StateValue` without re-publishing
+  discovery (`running` → `idle` → `off`).
+
+### Notes
+
+- This is a behaviour fix only; no wire-contract or config change. Existing
+  pairings pick it up on add-on restart.
+- The LPC `number` entity already refreshed correctly (its state flows
+  through the same orchestrator path, now fixed) — no change for LPC users.
+
 ## [0.6.4-dev] - 2026-08-01
 
 Corrects the 0.6.2-dev fix for the LPC slider cap: the original approach relied
