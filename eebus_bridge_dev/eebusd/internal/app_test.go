@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"eebusd/internal/writes/wucapi"
 )
 
 // TestWriteLineAtomicUnderConcurrency is the regression guard for the
@@ -86,4 +88,59 @@ func trunc(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// TestApplyNumberRangeFallback_NumberNilAppliesDefault is the regression guard
+// for the "slider capped at 100 W" bug: when a number use case returns no
+// range (device did not expose nominal_max), the daemon MUST still publish a
+// realistic max, otherwise Home Assistant applies its hard-coded default of
+// 100. The fallback uses EffectiveLPCMaxLimit() (configurable, default 25000).
+func TestApplyNumberRangeFallback_NumberNilAppliesDefault(t *testing.T) {
+	a := &App{cfg: &Config{}} // LPCMaxLimitW=0 → EffectiveLPCMaxLimit=25000
+	rng := a.applyNumberRangeFallback("number", nil)
+	if rng == nil {
+		t.Fatal("expected a fallback range for number, got nil")
+	}
+	if !rng.HasMax {
+		t.Error("fallback range should have HasMax=true")
+	}
+	if rng.Max != DefaultLPCMaxLimitW {
+		t.Errorf("fallback Max = %v, want default %v", rng.Max, DefaultLPCMaxLimitW)
+	}
+	if rng.Min != 0 || rng.Step != 1 {
+		t.Errorf("fallback Min/Step = %v/%v, want 0/1", rng.Min, rng.Step)
+	}
+}
+
+// TestApplyNumberRangeFallback_NumberNilHonorsConfig asserts a user-configured
+// max wins over the hard-coded default.
+func TestApplyNumberRangeFallback_NumberNilHonorsConfig(t *testing.T) {
+	a := &App{cfg: &Config{LPCMaxLimitW: 9000}}
+	rng := a.applyNumberRangeFallback("number", nil)
+	if rng == nil || rng.Max != 9000 {
+		t.Errorf("fallback Max = %v, want 9000 (configured)", rng)
+	}
+}
+
+// TestApplyNumberRangeFallback_NumberPreserved asserts a device-derived range
+// is returned unchanged (the fallback never overrides a real ceiling).
+func TestApplyNumberRangeFallback_NumberPreserved(t *testing.T) {
+	a := &App{cfg: &Config{LPCMaxLimitW: 9000}}
+	provided := &wucapi.NumberRange{Min: 0, Max: 4200, Step: 1, HasMax: true}
+	rng := a.applyNumberRangeFallback("number", provided)
+	if rng != provided {
+		t.Errorf("device-derived range was replaced: got %v, want %v", rng, provided)
+	}
+	if rng.Max != 4200 {
+		t.Errorf("Max = %v, want 4200 (device value preserved)", rng.Max)
+	}
+}
+
+// TestApplyNumberRangeFallback_ClimateNilReturnsNil asserts climate/switch/
+// select components never get a fallback range (they are not numeric sliders).
+func TestApplyNumberRangeFallback_ClimateNilReturnsNil(t *testing.T) {
+	a := &App{cfg: &Config{}}
+	if rng := a.applyNumberRangeFallback("climate", nil); rng != nil {
+		t.Errorf("climate fallback = %v, want nil", rng)
+	}
 }

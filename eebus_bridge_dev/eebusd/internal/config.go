@@ -17,6 +17,25 @@ import (
 	"github.com/enbility/ship-go/cert"
 )
 
+// DefaultLPCMaxLimitW is the fallback upper bound (watts) for the LPC number
+// entity when neither the device nor the operator provides one. 25000 W covers
+// the full residential range: heat pumps (~3–15 kW), single-phase wallboxes
+// (3.7–7.4 kW), three-phase wallboxes (11–22 kW) and residential
+// inverters/batteries. It is intentionally generous so the slider never caps a
+// legitimate value; the device's SPINE layer is the final authority on what it
+// accepts, and rejects out-of-range limits with a clean command_result.
+const DefaultLPCMaxLimitW = 25000.0
+
+// EffectiveLPCMaxLimit returns the resolved fallback max for the LPC number
+// entity: cfg.LPCMaxLimitW when positive, otherwise DefaultLPCMaxLimitW.
+// Centralized so the daemon and tests share one resolution rule.
+func (c *Config) EffectiveLPCMaxLimit() float64 {
+	if c.LPCMaxLimitW > 0 {
+		return c.LPCMaxLimitW
+	}
+	return DefaultLPCMaxLimitW
+}
+
 // Config holds all runtime configuration parsed from command-line flags.
 type Config struct {
 	// Local service
@@ -47,6 +66,16 @@ type Config struct {
 	Commands      bool
 	WriteUseCases string // "auto" (default) or explicit list, e.g. "ohpcf,lpc"
 	WriteProfile  string // "auto" (default) or heatpump|evse|inverter|battery|generic
+
+	// LPCMaxLimitW is the fallback upper bound (watts) applied to the LPC
+	// number entity when the device does not advertise a nominal maximum
+	// consumption. Home Assistant ALWAYS applies a max to a number entity
+	// (default 100 when the field is omitted), so we must publish an explicit
+	// realistic ceiling to avoid silently capping the slider at 100 W. A value
+	// <= 0 falls back to the hard-coded default (25000 W — covers residential
+	// heat pumps, wallboxes, inverters and batteries). Set via the add-on
+	// option write.lpc_max_limit_w.
+	LPCMaxLimitW float64
 
 	// Data refresh
 	// PollInterval caps how often the scanner proactively re-issues SPINE read
@@ -86,6 +115,12 @@ func (c *Config) RegisterFlags(fs *flag.FlagSet) {
 	fs.BoolVar(&c.Commands, "commands", false, "accept NDJSON command lines on stdin (enables write use cases)")
 	fs.StringVar(&c.WriteUseCases, "write-usecases", "auto", `comma-separated use cases to enable, or "auto"`)
 	fs.StringVar(&c.WriteProfile, "write-profile", "auto", "device profile hint: auto|heatpump|evse|inverter|battery|generic")
+
+	// LPCMaxLimitW: fallback max for the LPC number entity when the device does
+	// not expose a nominal max. See Config.LPCMaxLimitW for the rationale.
+	// <= 0 falls back to DefaultLPCMaxLimitW (25000 W).
+	fs.Float64Var(&c.LPCMaxLimitW, "write-lpc-max-limit-w", 0,
+		"fallback max (W) for the LPC number when nominal_max is absent (0 = 25000)")
 
 	// PollInterval caps the proactive re-read cadence per remote entity.
 	// Notifications pushed by the device are always handled immediately; only
@@ -143,13 +178,25 @@ func (c *Config) String() string {
 			"certpath=%s keypath=%s certdir=%s\n"+
 			"remoteski=%s secret=%s autoaccept=%v heartbeat=%s\n"+
 			"loglevel=%s json=%v list=%v poll-interval=%s\n"+
-			"commands=%v write-usecases=%s write-profile=%s",
+			"commands=%v write-usecases=%s write-profile=%s\n"+
+			"write-lpc-max-limit-w=%s",
 		c.Port, c.Brand, c.Model, c.Serial, c.VendorCode,
 		c.CertPath, c.KeyPath, c.CertDir,
 		c.RemoteSKI, secret, c.AutoAccept, c.Heartbeat,
 		c.LogLevel, c.JSONOut, c.ListAll, c.PollInterval,
 		c.Commands, c.WriteUseCases, c.WriteProfile,
+		lpcMaxDisplay(c.LPCMaxLimitW),
 	)
+}
+
+// lpcMaxDisplay renders the LPC fallback max for the startup config log: a
+// positive configured value is shown as-is; 0 (or negative) is shown as the
+// resolved default so the operator knows the effective ceiling at a glance.
+func lpcMaxDisplay(v float64) string {
+	if v > 0 {
+		return fmt.Sprintf("%.0f (configured)", v)
+	}
+	return fmt.Sprintf("%.0f (default)", DefaultLPCMaxLimitW)
 }
 
 // LoadOrGenerateCertificate returns the local TLS certificate to use for the

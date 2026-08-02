@@ -23,6 +23,52 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.6.4-dev] - 2026-08-01
+
+Corrects the 0.6.2-dev fix for the LPC slider cap: the original approach relied
+on leaving the HA `number` without a `max`, expecting HA to treat it as
+unbounded. That assumption was **wrong** — Home Assistant always applies a max
+to a number entity (hard-coded default of 100 when omitted, per the
+[MQTT number docs](https://www.home-assistant.io/integrations/number.mqtt/)).
+So on devices that do not expose a nominal max (the VR920), the slider stayed
+capped at 100 W despite 0.6.2-dev.
+
+This release publishes an explicit, configurable fallback max for exactly that
+case, so the slider reflects a realistic residential ceiling instead of 100.
+
+### Fixed
+
+- **LPC slider no longer capped at 100 W when the device exposes no nominal
+  max.** When a `number` use case returns no device-derived range, the daemon
+  now applies a fallback range `{min: 0, max: <fallback>, step: 1}`. The
+  fallback max defaults to **25000 W** (covers residential heat pumps,
+  single/three-phase wallboxes, inverters and batteries) and is configurable
+  via the new `write.lpc_max_limit_w` add-on option. The device's SPINE layer
+  remains the final authority and rejects out-of-range values with a clean
+  `command_result`. A device-derived nominal max always wins over the fallback.
+
+### Added
+
+- **Add-on option `write.lpc_max_limit_w`** (default `0` = use the built-in
+  25000 W default). Lets the operator raise/lower the slider ceiling for
+  atypical hardware (e.g. a commercial 50 kW wallbox), flowing through the
+  bridge (`EEBUS_WRITE_LPC_MAX_LIMIT_W`) to eebusd's
+  `-write-lpc-max-limit-w` flag.
+- **`Config.EffectiveLPCMaxLimit()`** resolves the configured-or-default max
+  in one place (shared by the daemon and tests).
+- **`App.applyNumberRangeFallback(component, rng)`** centralizes the
+  fallback rule, extracted from `onWriteUseCaseEvent` so it is unit-testable
+  without a populated registry. Non-number components (climate/switch/select)
+  are unaffected.
+
+### Notes
+
+- This supersedes the 0.6.2-dev "unbounded when nominal_max absent" behavior,
+  which was based on an incorrect assumption about HA's defaults. The
+  `range` wire-contract field added in 0.6.2-dev is reused unchanged.
+- 25000 W was chosen as a generous residential ceiling: the slider is a hint,
+  not a hard validation — the device enforces its real limits via SPINE.
+
 ## [0.6.3-dev] - 2026-08-01
 
 Fixes a stdout write race that produced corrupt NDJSON lines on the bridge
@@ -522,7 +568,8 @@ OHPCF), with an architecture designed to grow without touching the bridge.
 - The code source is intentionally kept identical to the production add-on
   at fork time. Future dev-only changes will be listed here.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.3...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.4...HEAD
+[0.6.4-dev]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.3...dev-v0.6.4
 [0.6.3-dev]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.2...dev-v0.6.3
 [0.6.2-dev]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.1...dev-v0.6.2
 [0.6.1-dev]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.0...dev-v0.6.1

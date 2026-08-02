@@ -54,6 +54,7 @@ type Config struct {
 	WriteEnable        bool
 	WriteUseCases      string // "auto" (default) or comma-separated list
 	WriteDeviceProfile string // "auto" (default) or heatpump|evse|inverter|battery|generic
+	WriteLPCMaxLimitW  int    // fallback max (W) for the LPC number when nominal_max is absent; 0 = eebusd default
 
 	// Process wiring (set by run.sh).
 	ScannerBin string // path to eebusd binary
@@ -83,6 +84,7 @@ func Load() (Config, error) {
 		WriteEnable:        envBool("EEBUS_WRITE_ENABLE", false),
 		WriteUseCases:      envDefault("EEBUS_WRITE_USE_CASES", "auto"),
 		WriteDeviceProfile: envDefault("EEBUS_WRITE_DEVICE_PROFILE", "auto"),
+		WriteLPCMaxLimitW:  envInt("EEBUS_WRITE_LPC_MAX_LIMIT_W", 0),
 		ScannerBin:         envDefault("EEBUS_SCANNER_BIN", "/usr/local/bin/eebusd"),
 		DataDir:            envDefault("EEBUS_DATA_DIR", "/data/eebus"),
 	}
@@ -135,6 +137,9 @@ func (c Config) Args() []string {
 		args = append(args, "-commands")
 		args = append(args, "-write-usecases", c.WriteUseCases)
 		args = append(args, "-write-profile", c.WriteDeviceProfile)
+		// Fallback max for the LPC number entity when the device does not expose
+		// a nominal max. eebusd applies its own default when 0.
+		args = append(args, "-write-lpc-max-limit-w", strconv.Itoa(c.WriteLPCMaxLimitW))
 	}
 	return args
 }
@@ -150,27 +155,28 @@ func (c Config) Redacted() map[string]any {
 		return "<set>"
 	}
 	return map[string]any{
-		"log_level":            c.LogLevel,
-		"poll_interval":        c.PollInterval,
-		"auto_accept":          c.AutoAccept,
-		"remote_ski":           c.RemoteSKI,
-		"secret":               mask(c.Secret),
-		"brand":                c.Brand,
-		"model":                c.Model,
-		"serial":               c.Serial,
-		"vendor":               c.Vendor,
-		"port":                 c.Port,
-		"mqtt_host":            c.MQTTHost,
-		"mqtt_port":            c.MQTTPort,
-		"mqtt_user":            mask(c.MQTTUser),
-		"mqtt_password":        mask(c.MQTTPassword),
-		"mqtt_prefix":          c.MQTTPrefix,
-		"discovery":            c.MQTTDiscovery,
-		"write_enable":         c.WriteEnable,
-		"write_use_cases":      c.WriteUseCases,
-		"write_device_profile": c.WriteDeviceProfile,
-		"scanner_bin":          c.ScannerBin,
-		"data_dir":             c.DataDir,
+		"log_level":             c.LogLevel,
+		"poll_interval":         c.PollInterval,
+		"auto_accept":           c.AutoAccept,
+		"remote_ski":            c.RemoteSKI,
+		"secret":                mask(c.Secret),
+		"brand":                 c.Brand,
+		"model":                 c.Model,
+		"serial":                c.Serial,
+		"vendor":                c.Vendor,
+		"port":                  c.Port,
+		"mqtt_host":             c.MQTTHost,
+		"mqtt_port":             c.MQTTPort,
+		"mqtt_user":             mask(c.MQTTUser),
+		"mqtt_password":         mask(c.MQTTPassword),
+		"mqtt_prefix":           c.MQTTPrefix,
+		"discovery":             c.MQTTDiscovery,
+		"write_enable":          c.WriteEnable,
+		"write_use_cases":       c.WriteUseCases,
+		"write_device_profile":  c.WriteDeviceProfile,
+		"write_lpc_max_limit_w": c.WriteLPCMaxLimitW,
+		"scanner_bin":           c.ScannerBin,
+		"data_dir":              c.DataDir,
 	}
 }
 
