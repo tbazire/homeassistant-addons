@@ -169,9 +169,19 @@ func (m *Module) forwardSignal(ski string, entity spineapi.EntityRemoteInterface
 	switch event {
 	case lpc.DataUpdateLimit:
 		limit, err := m.impl.ConsumptionLimit(entity)
-		if err == nil && limit.IsActive {
-			emitNumber(cb, ski, entity, "consumption_limit", limit.Value, nil, "W")
+		if err != nil {
+			return
 		}
+		// 0 means "no active limit" (consistent with Dispatch, which treats a
+		// set value <= 0 as a clear, and with EntityState). We always emit a
+		// value here — including 0 when the limit is inactive — so the HA
+		// consumption_limit sensor refreshes after a clear instead of staying
+		// frozen on the last active value.
+		val := limit.Value
+		if !limit.IsActive {
+			val = 0
+		}
+		emitNumber(cb, ski, entity, "consumption_limit", val, nil, "W")
 	case lpc.DataUpdateFailsafeConsumptionActivePowerLimit:
 		v, err := m.impl.FailsafeConsumptionActivePowerLimit(entity)
 		emitNumber(cb, ski, entity, "failsafe_power_limit", v, err, "W")
@@ -226,18 +236,25 @@ func (m *Module) IsCompatible(entity spineapi.EntityRemoteInterface) bool {
 }
 
 // EntityState returns the current consumption limit as a string (the watts
-// value), or "" when no limit is set / not yet known. This is the initial
-// value published on the HA number entity's state topic.
+// value), or "0" when no limit is active / not yet known. This is the value
+// published on the HA number entity's state topic.
+//
+// "0" (rather than "") is used for an inactive limit so the slider and the
+// consumption_limit sensor show the same value after a clear: both read 0,
+// which is the wire semantic for "no limit" (see Dispatch). HA renders "0"
+// directly on the number entity; "unknown" is reserved for the genuinely
+// not-yet-known case, which never reaches here because ConsumptionLimit
+// returns the device's reported state (defaulting to inactive).
 func (m *Module) EntityState(entity spineapi.EntityRemoteInterface) string {
 	if m.impl == nil {
 		return ""
 	}
 	limit, err := m.impl.ConsumptionLimit(entity)
-	if err != nil || !limit.IsActive {
-		// No active limit → empty state. The bridge will publish "" which HA
-		// renders as "unknown"; once the user sets a value the device
-		// notification refreshes it.
+	if err != nil {
 		return ""
+	}
+	if !limit.IsActive {
+		return "0"
 	}
 	return formatWatts(limit.Value)
 }

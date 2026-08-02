@@ -23,6 +23,56 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.6.6-dev] - 2026-08-02
+
+Fixes the LPC consumption-limit sensor staying frozen on its last value after
+the limit is cleared, and standardises the "0 = no active limit" semantic
+across the slider and the sensor so both surfaces agree after a clear.
+
+### Root cause
+
+Setting the LPC limit to 0 on the HA slider (or any value ≤ 0) clears the
+limit on the device (`Dispatch` → `WriteConsumptionLimit(IsActive:false)`).
+But `forwardSignal` only emitted the `consumption_limit` signal when
+`IsActive == true`. After a clear, the device notifies `IsActive == false`,
+the daemon emitted **no** `uc_signal` line, the bridge republished nothing,
+and the sensor kept its last active value indefinitely — the slider and the
+sensor then disagreed, with no way for the user to tell the limit was gone.
+
+### Fixed
+
+- **`consumption_limit` sensor now refreshes to 0 after a clear.**
+  `forwardSignal` (`DataUpdateLimit` case) now always emits a value — 0 when
+  the limit is inactive, the actual watts value when active — instead of
+  staying silent on the inactive transition. The bridge already published
+  state unconditionally for `uc_signal` lines, so the only fix needed was on
+  the daemon side.
+- **Slider and sensor now agree.** `EntityState` returns `"0"` for an inactive
+  limit (previously `""`, which HA rendered as "unknown"), matching the
+  `consumption_limit` sensor's 0. After a clear, both the number entity and
+  the sensor read 0.
+
+### Changed
+
+- **"0 = no active limit" is now the documented wire semantic**, consistent
+  across all three LPC surfaces: `Dispatch` (set value ≤ 0 → clear),
+  `EntityState` (inactive → "0"), and `forwardSignal` (inactive → emits 0).
+  To disable the LPC limit, set the slider to 0.
+
+### Tests
+
+- `lpc_test.go`: `TestZeroMeansClearIsTheWireSemantic` pins the shared
+  rendering path (`formatWatts(0) == "0"`) that all three surfaces rely on,
+  so a future refactor cannot silently desync the slider/sensor again.
+
+### Notes
+
+- No bridge change, no wire-contract change, no config change — daemon-only
+  behaviour fix. Existing pairings pick it up on add-on restart.
+- This does not add a dedicated "clear" button entity: 0 on the slider is the
+  clear action. A separate button is out of scope (can be added later if the
+  0=clear mapping proves ambiguous in practice).
+
 ## [0.6.5-dev] - 2026-08-01
 
 Fixes a two-sided bug that left the OHPCF climate entity's state (the
