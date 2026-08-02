@@ -239,13 +239,18 @@ and the bridge log explains the reason under `command result status=error`.
 > `command_result`. In all cases `min` is 0 (a negative power limit has no
 > SPINE meaning) and the step is 1 W.
 
+> ℹ️ **Disabling the limit.** Set the slider to **0** to remove the active
+> consumption limit. The device clears the cap, and both the number entity and
+> the `consumption_limit` sensor read 0 (the wire semantic for "no active
+> limit"). Setting any positive value applies a new persistent cap.
+
 In addition to the `number` control entity, LPC exposes **read-only sensors**
 from the data the controllable system advertises. They attach to the same device
 and entity as the `number` entity:
 
 | Sensor | HA type | Meaning |
 |--------|---------|---------|
-| `consumption_limit` | `sensor` (power, W) | Currently active consumption limit (only emitted when a limit is set) |
+| `consumption_limit` | `sensor` (power, W) | Currently active consumption limit; reads **0** when no limit is set |
 | `failsafe_power_limit` | `sensor` (power, W) | Failsafe active-power cap active in init/failsafe state |
 | `nominal_max` | `sensor` (power, W) | Device's contractual / rated consumption ceiling |
 | `failsafe_duration_min` | `sensor` (duration, min) | Minimum time the device stays in failsafe state |

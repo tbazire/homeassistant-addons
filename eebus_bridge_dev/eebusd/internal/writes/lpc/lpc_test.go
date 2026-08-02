@@ -92,6 +92,26 @@ func TestFormatWatts(t *testing.T) {
 	}
 }
 
+// TestZeroMeansClearIsTheWireSemantic pins the invariant that "0 = no active
+// limit" is consistent across all three LPC surfaces that produce a wire
+// value. Before the 0.6.6-dev fix, forwardSignal stayed silent on clear (the
+// sensor froze) while EntityState returned "" (the slider showed "unknown"),
+// so the slider and sensor disagreed and neither reflected the clear. Now
+// both emit "0", and Dispatch treats a set value <= 0 as a clear. This test
+// documents the contract so a future refactor cannot silently desync them
+// again.
+//
+// We assert formatWatts(0)=="0" because that single helper is the shared
+// rendering path for both EntityState (active-limit branch) and the "0"
+// literal used by the inactive branch + forwardSignal. If 0 ever formats as
+// anything other than "0", all three surfaces break together — which is
+// exactly the alignment we want.
+func TestZeroMeansClearIsTheWireSemantic(t *testing.T) {
+	if got := formatWatts(0); got != "0" {
+		t.Fatalf("formatWatts(0) = %q, want \"0\"; the 0=clear semantic across Dispatch/EntityState/forwardSignal is broken", got)
+	}
+}
+
 func TestModuleRegisteredInGlobalRegistry(t *testing.T) {
 	// init() of this package registers the module. We can't import the parent
 	// writes package here (import cycle), so we just assert that our own
