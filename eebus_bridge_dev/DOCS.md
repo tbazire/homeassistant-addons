@@ -154,6 +154,7 @@ HA UI ──► MQTT command_topic ──► eebus-bridge ──► stdin NDJSON
 | `write.enable` | bool | `false` | Master switch. When `false`, no write use case is registered, no command topic is subscribed, and the add-on stays strictly read-only. |
 | `write.use_cases` | string | `"auto"` | `"auto"` activates every use case the device announces it supports. Set to a comma-separated list (e.g. `"ohpcf"`) to restrict to specific ones. |
 | `write.device_profile` | enum | `"auto"` | `auto` = trust the entity types the device advertises (recommended). `heatpump` / `evse` / `inverter` / `battery` / `generic` restrict discovery to that device family — useful when several devices are paired but only one should be controllable. |
+| `write.lpc_max_limit_w` | int | `0` | Fallback upper bound (W) for the LPC power-limit slider when the device does not advertise a nominal max. `0` = built-in default (25000 W). Raise it for atypical hardware (e.g. a commercial wallbox); the device's SPINE layer still rejects genuinely out-of-range values. |
 
 ### Supported use cases
 
@@ -228,9 +229,14 @@ and the bridge log explains the reason under `command result status=error`.
 > ℹ️ **Input range.** When the device advertises a nominal maximum consumption
 > (LPC Scenario 4), the slider's `max` is set to that value so you cannot
 > request more than the hardware can draw. When the device does not expose a
-> nominal max (e.g. the Saunier Duval VR920), the number is published without a
-> `max` — the field is then free-form and the device itself rejects out-of-range
-> values via SPINE. In both cases `min` is 0 (a negative power limit has no
+> nominal max (e.g. the Saunier Duval VR920), a **fallback ceiling of 25000 W**
+> is applied instead — Home Assistant always enforces a max on a number entity
+> (its built-in default is 100), so an explicit realistic value must be
+> published to avoid silently capping the slider at 100 W. The fallback is
+> configurable via `write.lpc_max_limit_w` (set it to match your hardware; `0`
+> keeps the 25000 W default). The device's SPINE layer remains the final
+> authority and rejects genuinely out-of-range values with a clean
+> `command_result`. In all cases `min` is 0 (a negative power limit has no
 > SPINE meaning) and the step is 1 W.
 
 In addition to the `number` control entity, LPC exposes **read-only sensors**

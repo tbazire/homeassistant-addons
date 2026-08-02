@@ -333,7 +333,7 @@ func (a *App) onWriteUseCaseEvent(ski string, entity spineapi.EntityRemoteInterf
 		}
 		actions := uc.AvailableActionsForEntity(entity)
 		state := uc.EntityState(entity)
-		rng := uc.NumberRangeForEntity(entity)
+		rng := a.applyNumberRangeFallback(uc.HAComponent(), uc.NumberRangeForEntity(entity))
 		if a.cfg.JSONOut {
 			a.emitControllable(ski, addr, entType, uc.Name(), uc.HAComponent(), uc.HAUnit(), actions, state, rng)
 		} else {
@@ -347,6 +347,29 @@ func (a *App) onWriteUseCaseEvent(ski string, entity spineapi.EntityRemoteInterf
 		if a.cfg.JSONOut {
 			uc.EmitSignals(ski, entity)
 		}
+	}
+}
+
+// applyNumberRangeFallback returns the range to advertise for a control entity.
+// When the use case already derived a range from the device (rng != nil), it is
+// returned unchanged. When it did not (rng == nil), a fallback is applied ONLY
+// for number components: Home Assistant always applies a max to a number entity
+// (default 100 when the field is omitted), so a missing range would silently
+// cap the slider at 100 W. The fallback uses the configurable
+// EffectiveLPCMaxLimit() so the operator can raise it for atypical hardware.
+// Non-number components (climate/switch/select) get nil — they ignore ranges.
+//
+// Extracted from onWriteUseCaseEvent so the fallback rule is unit-testable
+// without a populated write-use-case registry.
+func (a *App) applyNumberRangeFallback(component string, rng *wucapi.NumberRange) *wucapi.NumberRange {
+	if rng != nil || component != "number" {
+		return rng
+	}
+	return &wucapi.NumberRange{
+		Min:    0,
+		Max:    a.cfg.EffectiveLPCMaxLimit(),
+		Step:   1,
+		HasMax: true,
 	}
 }
 

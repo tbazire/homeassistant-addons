@@ -87,6 +87,10 @@ main() {
         export EEBUS_WRITE_ENABLE="true"
         export EEBUS_WRITE_USE_CASES="$(bashio::config 'write.use_cases')"
         export EEBUS_WRITE_DEVICE_PROFILE="$(bashio::config 'write.device_profile')"
+        # Fallback upper bound for the LPC number entity (watts) when the device
+        # does not advertise a nominal max. 0 = eebusd default (25000). Without
+        # an explicit max, Home Assistant caps the slider at 100.
+        export EEBUS_WRITE_LPC_MAX_LIMIT_W="$(bashio::config 'write.lpc_max_limit_w')"
         bashio::log.warning "write commands ENABLED — the add-on can now control the device (profile=$(bashio::config 'write.device_profile'), use_cases=$(bashio::config 'write.use_cases'))"
     else
         export EEBUS_WRITE_ENABLE="false"
