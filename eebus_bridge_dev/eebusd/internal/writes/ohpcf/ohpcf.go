@@ -22,6 +22,8 @@ package ohpcf
 
 import (
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"eebusd/internal/writes/wucapi"
@@ -43,10 +45,19 @@ const (
 // Module is the write-side wrapper for the OHPCF use case. It implements
 // wucapi.WriteUseCase and holds the underlying eebus-go *ohpcf.OHPCF once
 // Bind has been called.
+//
+// lastState caches the most recent compressor action string emitted per
+// entity, so that repeated DataUpdateConsumptionState events carrying the
+// same state (spine-go does not diff: every notify with a non-nil State
+// re-fires the event) do not flood MQTT with identical controllable lines.
+// Only a genuine state transition produces a refresh.
 type Module struct {
 	impl     *ohpcf.OHPCF
 	eventCB  wucapi.EventCallback
 	signalCB wucapi.SignalCallback
+
+	stateMu   sync.Mutex
+	lastState map[string]string
 }
 
 func init() {
@@ -108,25 +119,50 @@ func (m *Module) AvailableActionsForEntity(entity spineapi.EntityRemoteInterface
 //
 // Two callbacks are wired:
 //   - cbs.Event fires on compatibility changes (a device announced/revoked
-//     OHPCF support) → the daemon emits a "controllable" line.
-//   - cbs.Signal fires on each of the 8 OHPCF data-update events → the daemon
-//     emits a "uc_signal" line so the bridge can expose the value as a sensor.
+//     OHPCF support) AND on compressor state transitions → the daemon emits
+//     a "controllable" line so the bridge refreshes the climate entity.
+//   - cbs.Signal fires on the 7 read-only OHPCF data-update events → the
+//     daemon emits a "uc_signal" line so the bridge can expose the value as
+//     a sensor.
+//
+// DataUpdateConsumptionState is routed to cbs.Event (not cbs.Signal): it is
+// the runtime compressor state, which maps to the climate entity's
+// mode/action topics — not to a separate sensor. Because spine-go re-fires
+// this event on every notify that carries a non-nil State (no diffing), we
+// dedup per entity so only genuine transitions produce a refresh.
 func (m *Module) Bind(localEntity spineapi.EntityLocalInterface, cbs wucapi.Callbacks) {
 	if localEntity == nil {
 		return
 	}
 	m.eventCB = cbs.Event
 	m.signalCB = cbs.Signal
+	if m.lastState == nil {
+		m.lastState = make(map[string]string)
+	}
 	cb := api.EntityEventCallback(func(ski string, _ spineapi.DeviceRemoteInterface, entity spineapi.EntityRemoteInterface, event api.EventType) {
 		switch event {
 		case ohpcf.UseCaseSupportUpdate:
-			// A device just announced (or revoked) OHPCF support.
+			// A device just announced (or revoked) OHPCF support. Always
+			// re-emit so discovery (or removal) is reflected in HA.
 			if cbs.Event != nil {
 				cbs.Event(ski, entity)
 			}
+		case ohpcf.DataUpdateConsumptionState:
+			// Compressor state changed (or was re-notified). Re-emit a
+			// controllable line so the bridge refreshes the climate action —
+			// but only when the mapped state actually differs from the last
+			// one we published for this entity, to avoid an MQTT refresh
+			// storm when the device pushes periodic notifies with the same
+			// state.
+			if cbs.Event == nil {
+				return
+			}
+			if m.shouldEmitStateTransition(ski, entity) {
+				cbs.Event(ski, entity)
+			}
 		default:
-			// One of the 8 DataUpdate* events: re-query the matching getter
-			// and forward the current value as a uc_signal.
+			// One of the 7 read-only DataUpdate* events: re-query the matching
+			// getter and forward the current value as a uc_signal.
 			if cbs.Signal == nil {
 				return
 			}
@@ -134,6 +170,67 @@ func (m *Module) Bind(localEntity spineapi.EntityLocalInterface, cbs wucapi.Call
 		}
 	})
 	m.impl = ohpcf.NewOHPCF(localEntity, cb)
+}
+
+// shouldEmitStateTransition reports whether the compressor's mapped action
+// string differs from the last value published for this (ski, entity). It
+// records the new value when it returns true, so a repeated identical state
+// is suppressed until the device transitions to something else.
+//
+// When the current state cannot be read (impl nil, query error, or empty
+// mapping) the method returns false: there is nothing new to publish, and
+// emitting an empty action would clear the climate entity to "unknown" with
+// no benefit. The previous (possibly non-empty) cached value is preserved.
+func (m *Module) shouldEmitStateTransition(ski string, entity spineapi.EntityRemoteInterface) bool {
+	if m.impl == nil || entity == nil {
+		return false
+	}
+	state, err := m.impl.PowerConsumptionProcessState(entity)
+	if err != nil {
+		return false
+	}
+	mapped := mapStateToHA(state)
+	if mapped == "" {
+		return false
+	}
+	return m.recordStateTransition(entityStateKey(ski, entity), mapped)
+}
+
+// recordStateTransition implements the per-entity dedup: it returns true only
+// when `mapped` differs from the last cached value for `key`, and records it.
+// Separated from shouldEmitStateTransition so the dedup logic is unit-testable
+// without a SPINE stack. Safe for concurrent use (the Bind callback may fire
+// from several SPINE reader goroutines).
+func (m *Module) recordStateTransition(key, mapped string) bool {
+	if mapped == "" {
+		return false
+	}
+	m.stateMu.Lock()
+	defer m.stateMu.Unlock()
+	if m.lastState == nil {
+		m.lastState = make(map[string]string)
+	}
+	if prev, ok := m.lastState[key]; ok && prev == mapped {
+		return false
+	}
+	m.lastState[key] = mapped
+	return true
+}
+
+// entityStateKey builds a stable per-entity cache key. It mirrors the daemon's
+// topic addressing (ski + dotted entity address) so the dedup aligns with the
+// controllable line's identity. The ski is part of the key because a single
+// bridge can be paired with several devices, each with its own compressor.
+func entityStateKey(ski string, entity spineapi.EntityRemoteInterface) string {
+	addr := "?"
+	if entity != nil && entity.Address() != nil && len(entity.Address().Entity) > 0 {
+		parts := make([]string, 0, len(entity.Address().Entity))
+		for _, a := range entity.Address().Entity {
+			parts = append(parts, fmt.Sprintf("%d", a))
+		}
+		addr = strings.Join(parts, ".")
+	}
+	return ski + "/" + addr
 }
 
 // UseCase returns the underlying eebus-go use case, ready for svc.AddUseCase.
@@ -230,8 +327,10 @@ func (m *Module) forwardSignal(ski string, entity spineapi.EntityRemoteInterface
 		v, err := m.impl.PowerConsumptionMinimalPauseDuration(entity)
 		emitDuration(cb, ski, entity, "min_pause_duration", v, err)
 	case ohpcf.DataUpdateConsumptionState:
-		// The state is already reflected on the climate entity's action topic;
-		// no separate sensor needed.
+		// Not reached: routed to cbs.Event in the Bind callback so the climate
+		// entity's action topic is refreshed. Listed here only for exhaustiveness
+		// so a future addition to the events set is an obvious new case, not a
+		// silent fall-through.
 	}
 }
 

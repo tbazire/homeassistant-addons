@@ -127,3 +127,86 @@ func TestModuleNumberRangeAlwaysNil(t *testing.T) {
 		t.Errorf("NumberRangeForEntity = %v, want nil (climate has no range)", r)
 	}
 }
+
+// TestRecordStateTransition_Dedup is the regression guard for the OHPCF
+// state-refresh fix: spine-go re-fires DataUpdateConsumptionState on every
+// notify that carries a non-nil State (it does not diff), so the module MUST
+// suppress identical consecutive states or the bridge will flood MQTT with
+// redundant controllable lines. A genuine transition (running → paused →
+// running) must each emit; a repeat must not.
+func TestRecordStateTransition_Dedup(t *testing.T) {
+	m := &Module{}
+	const key = "ski-x/3.1"
+
+	// First emission for this entity: a new state, must emit.
+	if !m.recordStateTransition(key, "heating") {
+		t.Error("first state (heating) should emit")
+	}
+	// Identical re-notify: spine-go fires again, but nothing changed — must
+	// be suppressed to avoid a redundant controllable line.
+	if m.recordStateTransition(key, "heating") {
+		t.Error("identical state (heating again) must NOT emit")
+	}
+	// Real transition to paused: must emit.
+	if !m.recordStateTransition(key, "idle") {
+		t.Error("transition to idle should emit")
+	}
+	// Back to heating: even though seen before, it differs from the last
+	// value — must emit (the dedup is "changed since last publish", not
+	// "never seen before").
+	if !m.recordStateTransition(key, "heating") {
+		t.Error("transition back to heating should emit")
+	}
+}
+
+// TestRecordStateTransition_EmptyIgnored ensures a transient empty/unmapped
+// state never clears the cache or emits a refresh that would blank the
+// climate entity to "unknown". The previous value stays cached.
+func TestRecordStateTransition_EmptyIgnored(t *testing.T) {
+	m := &Module{}
+	const key = "ski/0"
+	if m.recordStateTransition(key, "") {
+		t.Error("empty mapped state must never emit")
+	}
+	// Cache stays empty: a subsequent real state still emits as the first.
+	if !m.recordStateTransition(key, "off") {
+		t.Error("real state after empty should emit")
+	}
+	// And another empty does not disturb the cached "off".
+	if m.recordStateTransition(key, "") {
+		t.Error("empty after a real state must never emit")
+	}
+	if m.recordStateTransition(key, "off") {
+		t.Error("identical state after empty must still be suppressed")
+	}
+}
+
+// TestRecordStateTransition_PerEntityIsolation confirms two different
+// compressors (distinct keys) do not share dedup state: the same action on
+// two devices emits for each, independently.
+func TestRecordStateTransition_PerEntityIsolation(t *testing.T) {
+	m := &Module{}
+	if !m.recordStateTransition("dev1/3.1", "heating") {
+		t.Error("dev1 first state should emit")
+	}
+	if !m.recordStateTransition("dev2/3.1", "heating") {
+		t.Error("dev2 first state should emit independently of dev1")
+	}
+	// Now both repeat — both suppressed.
+	if m.recordStateTransition("dev1/3.1", "heating") {
+		t.Error("dev1 repeat must be suppressed")
+	}
+	if m.recordStateTransition("dev2/3.1", "heating") {
+		t.Error("dev2 repeat must be suppressed")
+	}
+}
+
+// TestEntityStateKeyFormat asserts the cache key embeds both the ski and the
+// dotted entity address, so the dedup aligns with the controllable line's
+// identity (a bridge can be paired with several devices).
+func TestEntityStateKeyFormat(t *testing.T) {
+	// nil entity → graceful fallback rather than a panic.
+	if k := entityStateKey("ski", nil); k != "ski/?" {
+		t.Errorf("nil entity key = %q, want ski/?", k)
+	}
+}

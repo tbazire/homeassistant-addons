@@ -133,16 +133,14 @@ func (o *Orchestrator) handleEvent(ev Event, mapper *Mapper, mqtt *MQTTClient, e
 
 	case ev.Controllable != nil:
 		// A remote entity just announced support for a write use case (OHPCF,
-		// …). Build the matching HA control entity and subscribe to its
-		// command topics so HA user actions flow back to eebusd.
+		// LPC, …), or — on a subsequent line — refreshed the controllable's
+		// state (e.g. the OHPCF compressor transitioned running → paused).
+		// The first call publishes discovery + subscribes to command topics;
+		// every call (including refreshes) republishes the state/action so
+		// the climate entity's action topic tracks the device in real time.
 		disc := mapper.OnControllable(ev.Controllable)
 		if disc.Config != nil {
 			o.publishDiscovery(mqtt, disc)
-			// Initial state + action publish so HA does not show "unknown".
-			o.publishState(mqtt, disc.StateTopic, disc.StateValue)
-			if disc.ActionTopic != "" {
-				o.publishState(mqtt, disc.ActionTopic, disc.ActionValue)
-			}
 			// Subscribe to command topics. Use a closure capturing the
 			// controllable context so the inbound handler can build a Command
 			// and route it to eebusd's stdin.
@@ -151,6 +149,15 @@ func (o *Orchestrator) handleEvent(ev Event, mapper *Mapper, mqtt *MQTTClient, e
 				cmdTopic := topic
 				o.subscribeCommand(mqtt, cmdTopic, c, eebusd)
 			}
+		}
+		// Always refresh state (and action, when present). On first announce
+		// this seeds HA so it does not show "unknown"; on refreshes this
+		// propagates device-driven transitions. publishState is a no-op when
+		// the topic or value is empty, so climate/number components are both
+		// handled uniformly here.
+		o.publishState(mqtt, disc.StateTopic, disc.StateValue)
+		if disc.ActionTopic != "" {
+			o.publishState(mqtt, disc.ActionTopic, disc.ActionValue)
 		}
 
 	case ev.UcSignal != nil:

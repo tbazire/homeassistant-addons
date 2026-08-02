@@ -156,6 +156,68 @@ func TestOnControllable_DedupedByUniqueID(t *testing.T) {
 	}
 }
 
+// TestOnControllable_Climate_StateRefreshUpdatesAction is the regression guard
+// for the OHPCF state-refresh fix. After the first announcement, the daemon
+// keeps emitting controllable lines as the compressor transitions (running →
+// paused → …); OnControllable must NOT re-publish discovery, but it MUST
+// return a fresh action/state pair so the orchestrator can republish the
+// climate entity's action topic on each refresh. Previously the bridge
+// computed these fields and then the orchestrator dropped them; this test
+// pins the mapper half (the orchestrator half is covered separately).
+func TestOnControllable_Climate_StateRefreshUpdatesAction(t *testing.T) {
+	m := NewMapper("eebus", "homeassistant")
+	ski := "aaaabbbbccccddddeeee00001111222233334444"
+	c := &Controllable{
+		Line:      Line{SKI: ski, Entity: "3.1"},
+		UseCase:   "ohpcf",
+		Component: "climate",
+		Actions:   []string{"schedule", "pause", "resume"},
+		State:     "running",
+	}
+	// First call: discovery + initial action "running" → mode "auto".
+	first := m.OnControllable(c)
+	if first.Config == nil {
+		t.Fatal("first call must publish discovery")
+	}
+	if first.ActionValue != "running" {
+		t.Fatalf("initial action = %q, want running", first.ActionValue)
+	}
+	if first.StateValue != "auto" {
+		t.Fatalf("initial mode = %q, want auto", first.StateValue)
+	}
+
+	// Refresh: compressor transitioned running → paused. The mapper must
+	// surface the new action without re-publishing discovery.
+	c.State = "idle"
+	second := m.OnControllable(c)
+	if second.Config != nil {
+		t.Error("refresh must NOT re-publish discovery")
+	}
+	if second.ActionValue != "idle" {
+		t.Errorf("refresh action = %q, want idle", second.ActionValue)
+	}
+	if second.StateValue != "auto" {
+		t.Errorf("refresh mode = %q, want auto (action idle is non-off)", second.StateValue)
+	}
+	if second.ActionTopic == "" || second.ActionTopic != first.ActionTopic {
+		t.Errorf("refresh action topic changed: first=%q second=%q", first.ActionTopic, second.ActionTopic)
+	}
+
+	// Second refresh: compressor stopped → action "off". mode/state must
+	// follow (climateModeFromHAAction maps "off" → "off").
+	c.State = "off"
+	third := m.OnControllable(c)
+	if third.Config != nil {
+		t.Error("third call must NOT re-publish discovery")
+	}
+	if third.ActionValue != "off" {
+		t.Errorf("third action = %q, want off", third.ActionValue)
+	}
+	if third.StateValue != "off" {
+		t.Errorf("third mode = %q, want off", third.StateValue)
+	}
+}
+
 func TestDecodeHACommand_ModeOff(t *testing.T) {
 	c := &Controllable{Line: Line{SKI: "s", Entity: "3.1"}, UseCase: "ohpcf"}
 	op, val, unit, ok := decodeHACommand("eebus/s/3_1/ohpcf/mode/cmd", "off", c)
