@@ -114,13 +114,13 @@ type NumberRange struct {
 
 // Controllable is an INBOUND line (eebusd → bridge) announcing that a remote
 // entity accepts one or more write actions for a given use case. The bridge
-// uses it to create the matching HA control entity (climate/number/switch/...).
-// Component is the HA discovery component to build ("climate", "number", …),
-// declared by the use case itself so the bridge stays agnostic. Unit is the
-// Home Assistant unit of measurement for number-like components ("W", "A", …);
-// empty for climate/switch/select. Range carries the optional min/max/step for
-// number components (nil for climate/switch/select or when the device does not
-// advertise a ceiling).
+// uses it to create the matching HA control entity/entities (buttons/number/
+// switch/...). Component is the HA discovery component to build ("buttons",
+// "number", …), declared by the use case itself so the bridge stays agnostic.
+// Unit is the Home Assistant unit of measurement for number-like components
+// ("W", "A", …); empty for buttons/switch/select. Range carries the optional
+// min/max/step for number components (nil for buttons/switch/select or when
+// the device does not advertise a ceiling).
 type Controllable struct {
 	Line
 	EntityType string       `json:"entity_type,omitempty"`

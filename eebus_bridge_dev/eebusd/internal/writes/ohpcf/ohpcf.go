@@ -10,8 +10,11 @@
 // can run flexibly to optimize self-consumption of local PV production).
 //
 // The use case applies to remote entities of type Compressor that advertise
-// the OHPCF scenarios via SPINE. It is exposed in Home Assistant as a single
-// climate entity per compatible compressor entity.
+// the OHPCF scenarios via SPINE. It is exposed in Home Assistant as one
+// "buttons" component per compatible compressor entity — the bridge expands
+// that into a HA button per action (schedule/pause/resume/abort), each a
+// momentary trigger. The compressor's runtime state is exposed separately as
+// a read-only process_state sensor (see forwardSignal).
 //
 // This module is generic: it targets any Compressor that announces OHPCF,
 // not a specific brand or model. The Saunier Duval VR920 is one concrete
@@ -23,7 +26,6 @@ package ohpcf
 import (
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"eebusd/internal/writes/wucapi"
@@ -37,27 +39,21 @@ import (
 const (
 	useCaseName = "ohpcf"
 	// haComponent is the Home Assistant discovery component this use case is
-	// exposed as. climate gives the user modes (off/auto) and presets
-	// (pause/resume) that map naturally onto OHPCF actions.
-	haComponent = "climate"
+	// exposed as. "buttons" tells the bridge to generate one HA button entity
+	// per action (schedule/pause/resume/abort). Buttons are momentary triggers
+	// with no state, which matches OHPCF semantics better than a climate
+	// entity (modes/presets) did: each OHPCF action is a fire-and-forget
+	// command, not a mode to dwell in.
+	haComponent = "buttons"
 )
 
 // Module is the write-side wrapper for the OHPCF use case. It implements
 // wucapi.WriteUseCase and holds the underlying eebus-go *ohpcf.OHPCF once
 // Bind has been called.
-//
-// lastState caches the most recent compressor action string emitted per
-// entity, so that repeated DataUpdateConsumptionState events carrying the
-// same state (spine-go does not diff: every notify with a non-nil State
-// re-fires the event) do not flood MQTT with identical controllable lines.
-// Only a genuine state transition produces a refresh.
 type Module struct {
 	impl     *ohpcf.OHPCF
 	eventCB  wucapi.EventCallback
 	signalCB wucapi.SignalCallback
-
-	stateMu   sync.Mutex
-	lastState map[string]string
 }
 
 func init() {
@@ -70,13 +66,12 @@ func (m *Module) Name() string { return useCaseName }
 // HAComponent returns the Home Assistant discovery component.
 func (m *Module) HAComponent() string { return haComponent }
 
-// HAUnit returns "" — OHPCF is exposed as a climate entity (modes/presets),
-// which has no unit of measurement. Implemented to satisfy wucapi.WriteUseCase.
+// HAUnit returns "" — OHPCF is exposed as buttons (momentary triggers), which
+// have no unit of measurement. Implemented to satisfy wucapi.WriteUseCase.
 func (m *Module) HAUnit() string { return "" }
 
-// NumberRangeForEntity returns nil — OHPCF is a climate entity (modes/presets),
-// not a numeric setpoint, so it has no min/max/step range. Implemented to
-// satisfy wucapi.WriteUseCase.
+// NumberRangeForEntity returns nil — OHPCF buttons are not a numeric setpoint,
+// so they have no min/max/step range. Implemented to satisfy wucapi.WriteUseCase.
 func (m *Module) NumberRangeForEntity(spineapi.EntityRemoteInterface) *wucapi.NumberRange {
 	return nil
 }
@@ -118,27 +113,25 @@ func (m *Module) AvailableActionsForEntity(entity spineapi.EntityRemoteInterface
 // the use case is ready to be added to the service.
 //
 // Two callbacks are wired:
-//   - cbs.Event fires on compatibility changes (a device announced/revoked
-//     OHPCF support) AND on compressor state transitions → the daemon emits
-//     a "controllable" line so the bridge refreshes the climate entity.
-//   - cbs.Signal fires on the 7 read-only OHPCF data-update events → the
-//     daemon emits a "uc_signal" line so the bridge can expose the value as
-//     a sensor.
+//   - cbs.Event fires ONLY on compatibility changes (a device announced/revoked
+//     OHPCF support) → the daemon emits a "controllable" line so the bridge
+//     (re)creates the buttons.
+//   - cbs.Signal fires on every OHPCF data-update event, including the
+//     compressor runtime state (DataUpdateConsumptionState) → the daemon emits
+//     a "uc_signal" line so the bridge exposes/refreshes the matching sensor.
 //
-// DataUpdateConsumptionState is routed to cbs.Event (not cbs.Signal): it is
-// the runtime compressor state, which maps to the climate entity's
-// mode/action topics — not to a separate sensor. Because spine-go re-fires
-// this event on every notify that carries a non-nil State (no diffing), we
-// dedup per entity so only genuine transitions produce a refresh.
+// DataUpdateConsumptionState is routed to cbs.Signal (not cbs.Event): the
+// compressor state is now surfaced as a read-only process_state sensor (a
+// faithful reflection of the device's state) rather than as the action of a
+// climate entity. Buttons carry no state, so there is nothing to refresh on
+// the buttons themselves — the sensor is the single source of truth for the
+// process state.
 func (m *Module) Bind(localEntity spineapi.EntityLocalInterface, cbs wucapi.Callbacks) {
 	if localEntity == nil {
 		return
 	}
 	m.eventCB = cbs.Event
 	m.signalCB = cbs.Signal
-	if m.lastState == nil {
-		m.lastState = make(map[string]string)
-	}
 	cb := api.EntityEventCallback(func(ski string, _ spineapi.DeviceRemoteInterface, entity spineapi.EntityRemoteInterface, event api.EventType) {
 		switch event {
 		case ohpcf.UseCaseSupportUpdate:
@@ -147,21 +140,9 @@ func (m *Module) Bind(localEntity spineapi.EntityLocalInterface, cbs wucapi.Call
 			if cbs.Event != nil {
 				cbs.Event(ski, entity)
 			}
-		case ohpcf.DataUpdateConsumptionState:
-			// Compressor state changed (or was re-notified). Re-emit a
-			// controllable line so the bridge refreshes the climate action —
-			// but only when the mapped state actually differs from the last
-			// one we published for this entity, to avoid an MQTT refresh
-			// storm when the device pushes periodic notifies with the same
-			// state.
-			if cbs.Event == nil {
-				return
-			}
-			if m.shouldEmitStateTransition(ski, entity) {
-				cbs.Event(ski, entity)
-			}
 		default:
-			// One of the 7 read-only DataUpdate* events: re-query the matching
+			// Any OHPCF data-update event (including DataUpdateConsumptionState,
+			// which yields the process_state sensor): re-query the matching
 			// getter and forward the current value as a uc_signal.
 			if cbs.Signal == nil {
 				return
@@ -170,67 +151,6 @@ func (m *Module) Bind(localEntity spineapi.EntityLocalInterface, cbs wucapi.Call
 		}
 	})
 	m.impl = ohpcf.NewOHPCF(localEntity, cb)
-}
-
-// shouldEmitStateTransition reports whether the compressor's mapped action
-// string differs from the last value published for this (ski, entity). It
-// records the new value when it returns true, so a repeated identical state
-// is suppressed until the device transitions to something else.
-//
-// When the current state cannot be read (impl nil, query error, or empty
-// mapping) the method returns false: there is nothing new to publish, and
-// emitting an empty action would clear the climate entity to "unknown" with
-// no benefit. The previous (possibly non-empty) cached value is preserved.
-func (m *Module) shouldEmitStateTransition(ski string, entity spineapi.EntityRemoteInterface) bool {
-	if m.impl == nil || entity == nil {
-		return false
-	}
-	state, err := m.impl.PowerConsumptionProcessState(entity)
-	if err != nil {
-		return false
-	}
-	mapped := mapStateToHA(state)
-	if mapped == "" {
-		return false
-	}
-	return m.recordStateTransition(entityStateKey(ski, entity), mapped)
-}
-
-// recordStateTransition implements the per-entity dedup: it returns true only
-// when `mapped` differs from the last cached value for `key`, and records it.
-// Separated from shouldEmitStateTransition so the dedup logic is unit-testable
-// without a SPINE stack. Safe for concurrent use (the Bind callback may fire
-// from several SPINE reader goroutines).
-func (m *Module) recordStateTransition(key, mapped string) bool {
-	if mapped == "" {
-		return false
-	}
-	m.stateMu.Lock()
-	defer m.stateMu.Unlock()
-	if m.lastState == nil {
-		m.lastState = make(map[string]string)
-	}
-	if prev, ok := m.lastState[key]; ok && prev == mapped {
-		return false
-	}
-	m.lastState[key] = mapped
-	return true
-}
-
-// entityStateKey builds a stable per-entity cache key. It mirrors the daemon's
-// topic addressing (ski + dotted entity address) so the dedup aligns with the
-// controllable line's identity. The ski is part of the key because a single
-// bridge can be paired with several devices, each with its own compressor.
-func entityStateKey(ski string, entity spineapi.EntityRemoteInterface) string {
-	addr := "?"
-	if entity != nil && entity.Address() != nil && len(entity.Address().Entity) > 0 {
-		parts := make([]string, 0, len(entity.Address().Entity))
-		for _, a := range entity.Address().Entity {
-			parts = append(parts, fmt.Sprintf("%d", a))
-		}
-		addr = strings.Join(parts, ".")
-	}
-	return ski + "/" + addr
 }
 
 // UseCase returns the underlying eebus-go use case, ready for svc.AddUseCase.
@@ -249,8 +169,12 @@ func (m *Module) IsCompatible(entity spineapi.EntityRemoteInterface) bool {
 	return len(m.impl.AvailableScenariosForEntity(entity)) > 0
 }
 
-// EntityState returns the current compressor state as a short, HA-friendly
-// string. Empty when the state is not (yet) known.
+// EntityState returns the current compressor state as a short, lowercase
+// string (the raw SPINE enum name: "running"/"paused"/…). Empty when the
+// state is not (yet) known. This feeds c.State in the controllable line; for
+// the buttons component it is not surfaced on an entity (buttons carry no
+// state), but the same value is also pushed as the process_state sensor via
+// the Signal path, which is where the user reads it.
 func (m *Module) EntityState(entity spineapi.EntityRemoteInterface) string {
 	if m.impl == nil {
 		return ""
@@ -259,10 +183,10 @@ func (m *Module) EntityState(entity spineapi.EntityRemoteInterface) string {
 	if err != nil {
 		return ""
 	}
-	return mapStateToHA(state)
+	return mapStateToRaw(state)
 }
 
-// EmitSignals pushes all 8 OHPCF read-signal values for one entity through the
+// EmitSignals pushes all OHPCF read-signal values for one entity through the
 // Signal callback registered in Bind. Called by the daemon once when a remote
 // entity becomes compatible, so the bridge gets an initial snapshot instead of
 // waiting for the first device notification (HA would otherwise show "unknown").
@@ -277,9 +201,13 @@ func (m *Module) EmitSignals(ski string, entity spineapi.EntityRemoteInterface) 
 	}
 }
 
-// ohpcfDataUpdateEvents is the full set of OHPCF Scenario-1 data-update events.
-// Used by EmitSignals to push an initial snapshot in a stable order.
+// ohpcfDataUpdateEvents is the full set of OHPCF Scenario-1 data-update events,
+// including the compressor runtime state (DataUpdateConsumptionState). Used by
+// EmitSignals to push an initial snapshot in a stable order, so the
+// process_state sensor gets a value immediately rather than staying "unknown"
+// until the first device NOTIFY.
 var ohpcfDataUpdateEvents = []api.EventType{
+	ohpcf.DataUpdateConsumptionState,
 	ohpcf.DataUpdateRequestedPowerEstimate,
 	ohpcf.DataUpdateRequestedPowerMax,
 	ohpcf.DataUpdateConsumptionStartTime,
@@ -327,10 +255,16 @@ func (m *Module) forwardSignal(ski string, entity spineapi.EntityRemoteInterface
 		v, err := m.impl.PowerConsumptionMinimalPauseDuration(entity)
 		emitDuration(cb, ski, entity, "min_pause_duration", v, err)
 	case ohpcf.DataUpdateConsumptionState:
-		// Not reached: routed to cbs.Event in the Bind callback so the climate
-		// entity's action topic is refreshed. Listed here only for exhaustiveness
-		// so a future addition to the events set is an obvious new case, not a
-		// silent fall-through.
+		// The compressor's runtime state, surfaced as a read-only
+		// process_state sensor (value type "string"). The value is the raw
+		// SPINE enum name (running/paused/scheduled/available/completed/
+		// stopped), which is a faithful reflection of the device state —
+		// unlike the old climate "action" vocabulary that conflated several
+		// distinct states into heating/idle/off.
+		state, err := m.impl.PowerConsumptionProcessState(entity)
+		if err == nil {
+			emit(cb, ski, entity, "process_state", mapStateToRaw(state), "string", "")
+		}
 	}
 }
 
@@ -446,28 +380,13 @@ func adaptResultCB(cb wucapi.ResultCB) func(model.ResultDataType, model.MsgCount
 	}
 }
 
-// mapStateToHA converts the SPINE compressor state into a short HA-friendly
-// string used for the initial climate action/topic value.
-//
-// Mapping rationale (HA climate action vocabulary):
-//   - running   → heating   (compressor is actively consuming)
-//   - paused    → idle      (compressor paused but ready)
-//   - available → off       (no process scheduled)
-//   - scheduled → off       (planned, not yet running — still reads as off
-//     from the action standpoint until it starts)
-//   - completed → idle      (process finished, compressor idle)
-//   - stopped   → idle      (aborted)
-func mapStateToHA(s ucapi.CompressorPowerConsumptionStateType) string {
-	switch s {
-	case ucapi.CompressorPowerConsumptionStateRunning:
-		return "heating"
-	case ucapi.CompressorPowerConsumptionStatePaused:
-		return "idle"
-	case ucapi.CompressorPowerConsumptionStateCompleted, ucapi.CompressorPowerConsumptionStateStopped:
-		return "idle"
-	case ucapi.CompressorPowerConsumptionStateAvailable, ucapi.CompressorPowerConsumptionStateScheduled:
-		return "off"
-	default:
-		return ""
-	}
+// mapStateToRaw converts the SPINE compressor state enum into its lowercase
+// string name, used as the process_state sensor value. The enum values are
+// already clean lowercase strings ("running", "paused", "scheduled",
+// "available", "completed", "stopped"), so we just pass them through. This is
+// a faithful reflection of the device state, unlike the former climate
+// "action" mapping (heating/idle/off) which conflated several distinct
+// states and is what motivated the move from climate to buttons + sensor.
+func mapStateToRaw(s ucapi.CompressorPowerConsumptionStateType) string {
+	return strings.ToLower(string(s))
 }

@@ -13,15 +13,19 @@ import (
 // The module's wrapper logic (the parts WE wrote, not the underlying eebus-go
 // OHPCF implementation) is what matters for regression. The end-to-end write
 // path is exercised by eebus-go's own ohpcf tests against a mocked SPINE
-// stack; we focus here on the guards and the state-mapping table.
+// stack; we focus here on the guards and the state mapping.
 
 func TestModuleNameAndComponent(t *testing.T) {
 	m := &Module{}
 	if m.Name() != "ohpcf" {
 		t.Errorf("Name = %q, want ohpcf", m.Name())
 	}
-	if m.HAComponent() != "climate" {
-		t.Errorf("HAComponent = %q, want climate", m.HAComponent())
+	// OHPCF is exposed as "buttons": the bridge expands that into one HA button
+	// per action (schedule/pause/resume/abort). This replaced the former
+	// "climate" component, whose modes/presets were a poor fit for momentary
+	// process commands.
+	if m.HAComponent() != "buttons" {
+		t.Errorf("HAComponent = %q, want buttons", m.HAComponent())
 	}
 }
 
@@ -83,27 +87,29 @@ func TestFormatFloat(t *testing.T) {
 	}
 }
 
-func TestMapStateToHA(t *testing.T) {
-	// The state mapping is the bridge between SPINE compressor state and HA
-	// climate action vocabulary. It MUST be stable (it is the wire contract
-	// for the initial state publish).
+// TestMapStateToRaw pins the process_state sensor values. Unlike the former
+// mapStateToHA (which conflated several SPINE states into the climate action
+// vocabulary heating/idle/off), mapStateToRaw passes the enum name through
+// verbatim so the sensor reflects the device's real state. This is the wire
+// contract for the process_state sensor: changing it silently would change
+// what HA displays.
+func TestMapStateToRaw(t *testing.T) {
 	cases := []struct {
 		in   ucapi.CompressorPowerConsumptionStateType
 		want string
 	}{
-		{ucapi.CompressorPowerConsumptionStateRunning, "heating"},
-		{ucapi.CompressorPowerConsumptionStatePaused, "idle"},
-		{ucapi.CompressorPowerConsumptionStateCompleted, "idle"},
-		{ucapi.CompressorPowerConsumptionStateStopped, "idle"},
-		{ucapi.CompressorPowerConsumptionStateAvailable, "off"},
-		{ucapi.CompressorPowerConsumptionStateScheduled, "off"},
-		{"", ""},
-		{"unknownstate", ""},
+		{ucapi.CompressorPowerConsumptionStateRunning, "running"},
+		{ucapi.CompressorPowerConsumptionStatePaused, "paused"},
+		{ucapi.CompressorPowerConsumptionStateCompleted, "completed"},
+		{ucapi.CompressorPowerConsumptionStateStopped, "stopped"},
+		{ucapi.CompressorPowerConsumptionStateAvailable, "available"},
+		{ucapi.CompressorPowerConsumptionStateScheduled, "scheduled"},
+		{ucapi.CompressorPowerConsumptionStateType(""), ""},
 	}
 	for _, c := range cases {
-		got := mapStateToHA(c.in)
+		got := mapStateToRaw(c.in)
 		if got != c.want {
-			t.Errorf("mapStateToHA(%q) = %q, want %q", c.in, got, c.want)
+			t.Errorf("mapStateToRaw(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
@@ -120,93 +126,10 @@ func TestModuleRegisteredInGlobalRegistry(t *testing.T) {
 }
 
 func TestModuleNumberRangeAlwaysNil(t *testing.T) {
-	// OHPCF is a climate entity (modes/presets), not a numeric setpoint, so
-	// NumberRangeForEntity must always return nil regardless of the entity.
+	// OHPCF is exposed as buttons (momentary triggers), not a numeric setpoint,
+	// so NumberRangeForEntity must always return nil regardless of the entity.
 	m := &Module{}
 	if r := m.NumberRangeForEntity(nil); r != nil {
-		t.Errorf("NumberRangeForEntity = %v, want nil (climate has no range)", r)
-	}
-}
-
-// TestRecordStateTransition_Dedup is the regression guard for the OHPCF
-// state-refresh fix: spine-go re-fires DataUpdateConsumptionState on every
-// notify that carries a non-nil State (it does not diff), so the module MUST
-// suppress identical consecutive states or the bridge will flood MQTT with
-// redundant controllable lines. A genuine transition (running → paused →
-// running) must each emit; a repeat must not.
-func TestRecordStateTransition_Dedup(t *testing.T) {
-	m := &Module{}
-	const key = "ski-x/3.1"
-
-	// First emission for this entity: a new state, must emit.
-	if !m.recordStateTransition(key, "heating") {
-		t.Error("first state (heating) should emit")
-	}
-	// Identical re-notify: spine-go fires again, but nothing changed — must
-	// be suppressed to avoid a redundant controllable line.
-	if m.recordStateTransition(key, "heating") {
-		t.Error("identical state (heating again) must NOT emit")
-	}
-	// Real transition to paused: must emit.
-	if !m.recordStateTransition(key, "idle") {
-		t.Error("transition to idle should emit")
-	}
-	// Back to heating: even though seen before, it differs from the last
-	// value — must emit (the dedup is "changed since last publish", not
-	// "never seen before").
-	if !m.recordStateTransition(key, "heating") {
-		t.Error("transition back to heating should emit")
-	}
-}
-
-// TestRecordStateTransition_EmptyIgnored ensures a transient empty/unmapped
-// state never clears the cache or emits a refresh that would blank the
-// climate entity to "unknown". The previous value stays cached.
-func TestRecordStateTransition_EmptyIgnored(t *testing.T) {
-	m := &Module{}
-	const key = "ski/0"
-	if m.recordStateTransition(key, "") {
-		t.Error("empty mapped state must never emit")
-	}
-	// Cache stays empty: a subsequent real state still emits as the first.
-	if !m.recordStateTransition(key, "off") {
-		t.Error("real state after empty should emit")
-	}
-	// And another empty does not disturb the cached "off".
-	if m.recordStateTransition(key, "") {
-		t.Error("empty after a real state must never emit")
-	}
-	if m.recordStateTransition(key, "off") {
-		t.Error("identical state after empty must still be suppressed")
-	}
-}
-
-// TestRecordStateTransition_PerEntityIsolation confirms two different
-// compressors (distinct keys) do not share dedup state: the same action on
-// two devices emits for each, independently.
-func TestRecordStateTransition_PerEntityIsolation(t *testing.T) {
-	m := &Module{}
-	if !m.recordStateTransition("dev1/3.1", "heating") {
-		t.Error("dev1 first state should emit")
-	}
-	if !m.recordStateTransition("dev2/3.1", "heating") {
-		t.Error("dev2 first state should emit independently of dev1")
-	}
-	// Now both repeat — both suppressed.
-	if m.recordStateTransition("dev1/3.1", "heating") {
-		t.Error("dev1 repeat must be suppressed")
-	}
-	if m.recordStateTransition("dev2/3.1", "heating") {
-		t.Error("dev2 repeat must be suppressed")
-	}
-}
-
-// TestEntityStateKeyFormat asserts the cache key embeds both the ski and the
-// dotted entity address, so the dedup aligns with the controllable line's
-// identity (a bridge can be paired with several devices).
-func TestEntityStateKeyFormat(t *testing.T) {
-	// nil entity → graceful fallback rather than a panic.
-	if k := entityStateKey("ski", nil); k != "ski/?" {
-		t.Errorf("nil entity key = %q, want ski/?", k)
+		t.Errorf("NumberRangeForEntity = %v, want nil (buttons have no range)", r)
 	}
 }

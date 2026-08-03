@@ -23,6 +23,60 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.6.8-dev] - 2026-08-03
+
+OHPCF is no longer a `climate` entity. The climate representation was a poor
+fit: a climate pretends to be a thermostat (temperature setpoint + HVAC modes),
+but OHPCF is a **process controller** — its actions (schedule/pause/resume/
+abort) are momentary triggers, and its `action` topic (heating/idle/off)
+conflated several distinct device states into a value that "did not reflect
+reality". This release replaces it with one HA **button per action** + a
+read-only **process_state sensor** that carries the device's real state.
+
+### Changed
+
+- **OHPCF is now exposed as buttons, not a climate.** Each OHPCF action becomes
+  a `button` entity: `button.schedule`, `button.pause`, `button.resume`,
+  `button.abort`. Pressing a button fires the matching SPINE command once
+  (fire-and-forget), which matches OHPCF semantics far better than dwelling in
+  a climate mode. Buttons are filtered by device capability exactly as the old
+  presets were: `pause`/`resume` appear only when the compressor advertises
+  `is_pausable`, `abort` only when `is_stoppable`.
+- **The compressor runtime state is now a `process_state` sensor.** It carries
+  the raw SPINE enum name (`running`/`paused`/`scheduled`/`available`/
+  `completed`/`stopped`) — a faithful reflection of the device, unlike the old
+  climate `action` (`heating`/`idle`/`off`) which mapped several distinct states
+  to the same value. The sensor uses the existing `uc_signal` plumbing, so no
+  new sensor code was needed on the bridge side.
+- **`Mapper.OnControllable` now returns `[]Discovery`** (was a single
+  `Discovery`). A controllable line can now expand to multiple HA entities —
+  one per button for the `buttons` component, one for a `number`. The
+  orchestrator loops over the slice. Single-entity components (`number`) return
+  a one-element slice.
+
+### Added
+
+- **`HAButton` discovery struct** + the `"buttons"` component in the bridge.
+  Each action in the controllable line's `Actions` list yields one button with
+  a distinct `unique_id` and a `command_topic` of the form
+  `.../<usecase>/btn/<action>/cmd`.
+- **`decodeHACommand` handles button topics.** A `/btn/<action>/cmd` topic is
+  decoded to `<uc>.<action>` directly from the topic path (the button payload
+  is irrelevant — the topic names the action). `schedule` carries the usual
+  start-delay arg (0 = now).
+
+### Removed
+
+- **The `climate` component is gone.** `HAClimate`, `climateName`,
+  `climateModeFromHAAction`, and the `/mode/cmd` + `/preset/cmd` decoders are
+  deleted. No shipped use case produces a `climate` controllable anymore. (The
+  old climate entity will disappear from HA on upgrade; the buttons + sensor
+  replace it.)
+- **`mapStateToHA` + the OHPCF state-transition dedup** (`shouldEmitStateTransition`/
+  `recordStateTransition`/`lastState`/`stateMu`). The dedup existed to avoid
+  flooding MQTT with redundant climate action refreshes; now that the state is
+  a plain sensor (refreshed idempotently via `uc_signal`), it is unnecessary.
+
 ## [0.6.7-dev] - 2026-08-02
 
 Per-use-case security toggles. Until now `write.enable` was an all-or-nothing
