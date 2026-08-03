@@ -26,9 +26,17 @@ import (
 	spineapi "github.com/enbility/spine-go/api"
 )
 
-// BindAll calls Bind(localEntity, cbs) on every registered use case. It is the
-// single point the daemon calls at startup to wire the write use cases before
-// they are added to the service.
+// BindAll calls Bind(localEntity, cbs) on every registered use case that the
+// enabled predicate allows. It is the single point the daemon calls at startup
+// to wire the write use cases before they are added to the service.
+//
+// The enabled predicate is the per-use-case security gate (see
+// Config.UseCaseEnabled). A use case for which enabled returns false is
+// skipped entirely — its Bind is never called, so it never subscribes to SPINE
+// events and can never fire cbs.Event/cbs.Signal. This is what guarantees a
+// disabled use case creates no HA entity (no controllable line, no uc_signal,
+// no command topic): there is no event path to emit them. Passing nil for
+// enabled binds everything (used by tests).
 //
 // cbs.Event is invoked by each use case whenever a remote entity becomes (or
 // stops being) compatible with it; the daemon emits a "controllable" line so
@@ -40,12 +48,21 @@ import (
 // The Signal callback is wrapped per use case so the daemon knows which use
 // case a signal belongs to (the upstream callback carries the entity but not
 // the use case name).
-func BindAll(localEntity spineapi.EntityLocalInterface, cbs wucapi.Callbacks) error {
+func BindAll(localEntity spineapi.EntityLocalInterface, cbs wucapi.Callbacks, enabled func(string) bool) error {
 	if localEntity == nil {
 		return errNoLocalEntity
 	}
 	for _, uc := range wucapi.All() {
 		ucName := uc.Name()
+		if enabled != nil && !enabled(ucName) {
+			// Security gate: skip binding so the use case never receives SPINE
+			// events and can never emit toward the bridge. This must happen
+			// before uc.Bind, otherwise the use case would still construct its
+			// eebus-go impl, subscribe to events, and fire callbacks that the
+			// daemon would relay as controllable/uc_signal lines (phantom
+			// entities).
+			continue
+		}
 		perUC := wucapi.Callbacks{
 			Event: cbs.Event,
 			Signal: func(ski string, entity spineapi.EntityRemoteInterface, signal, value, valueType, unit string) {

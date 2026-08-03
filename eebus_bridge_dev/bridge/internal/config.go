@@ -55,6 +55,11 @@ type Config struct {
 	WriteUseCases      string // "auto" (default) or comma-separated list
 	WriteDeviceProfile string // "auto" (default) or heatpump|evse|inverter|battery|generic
 	WriteLPCMaxLimitW  int    // fallback max (W) for the LPC number when nominal_max is absent; 0 = eebusd default
+	// Per-use-case security toggles (opt-in). Forwarded to eebusd as
+	// -write-lpc-enabled / -write-ohpcf-enabled. A use case is active only when
+	// both WriteEnable and its own toggle are true.
+	WriteLPCEnabled   bool
+	WriteOHPCFEnabled bool
 
 	// Process wiring (set by run.sh).
 	ScannerBin string // path to eebusd binary
@@ -85,6 +90,8 @@ func Load() (Config, error) {
 		WriteUseCases:      envDefault("EEBUS_WRITE_USE_CASES", "auto"),
 		WriteDeviceProfile: envDefault("EEBUS_WRITE_DEVICE_PROFILE", "auto"),
 		WriteLPCMaxLimitW:  envInt("EEBUS_WRITE_LPC_MAX_LIMIT_W", 0),
+		WriteLPCEnabled:    envBool("EEBUS_WRITE_LPC_ENABLED", false),
+		WriteOHPCFEnabled:  envBool("EEBUS_WRITE_OHPCF_ENABLED", false),
 		ScannerBin:         envDefault("EEBUS_SCANNER_BIN", "/usr/local/bin/eebusd"),
 		DataDir:            envDefault("EEBUS_DATA_DIR", "/data/eebus"),
 	}
@@ -140,6 +147,10 @@ func (c Config) Args() []string {
 		// Fallback max for the LPC number entity when the device does not expose
 		// a nominal max. eebusd applies its own default when 0.
 		args = append(args, "-write-lpc-max-limit-w", strconv.Itoa(c.WriteLPCMaxLimitW))
+		// Per-use-case security toggles (opt-in). A use case is active only when
+		// both -commands and its own flag are set.
+		args = append(args, "-write-lpc-enabled", strconv.FormatBool(c.WriteLPCEnabled))
+		args = append(args, "-write-ohpcf-enabled", strconv.FormatBool(c.WriteOHPCFEnabled))
 	}
 	return args
 }
@@ -175,6 +186,8 @@ func (c Config) Redacted() map[string]any {
 		"write_use_cases":       c.WriteUseCases,
 		"write_device_profile":  c.WriteDeviceProfile,
 		"write_lpc_max_limit_w": c.WriteLPCMaxLimitW,
+		"write_lpc_enabled":     c.WriteLPCEnabled,
+		"write_ohpcf_enabled":   c.WriteOHPCFEnabled,
 		"scanner_bin":           c.ScannerBin,
 		"data_dir":              c.DataDir,
 	}

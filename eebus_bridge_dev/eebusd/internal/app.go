@@ -168,13 +168,24 @@ func (a *App) Setup() error {
 	//     daemon emit a "controllable" line whenever a remote device announces
 	//     support for one of these use cases.
 	if a.cfg.Commands {
+		// Per-use-case security gate (Config.UseCaseEnabled). Only use cases
+		// the user explicitly enabled are bound, added to the service, and
+		// announced. A disabled use case is fully inert: no SPINE event path,
+		// no HA entity. Consulted in three places — BindAll (skip Bind),
+		// AddUseCase loop (skip service add), and onWriteUseCaseEvent (skip
+		// emit) — to keep the "off" state airtight.
+		enabled := a.cfg.UseCaseEnabled
 		if err := writes.BindAll(localEntity, wucapi.Callbacks{
 			Event:  a.onWriteUseCaseEvent,
 			Signal: a.onWriteUseCaseSignal,
-		}); err != nil {
+		}, enabled); err != nil {
 			return fmt.Errorf("bind write use cases: %w", err)
 		}
+		var registered []string
 		for _, uc := range writes.All() {
+			if !enabled(uc.Name()) {
+				continue
+			}
 			wuc := uc.UseCase()
 			if wuc == nil {
 				continue
@@ -182,13 +193,14 @@ func (a *App) Setup() error {
 			if err := a.service.AddUseCase(wuc); err != nil {
 				return fmt.Errorf("add write usecase %s: %w", uc.Name(), err)
 			}
+			registered = append(registered, uc.Name())
 		}
 		var dataOut io.Writer
 		if a.cfg.JSONOut {
 			dataOut = os.Stdout
 		}
 		a.writesDispatcher = writes.NewDispatcher(a, dataOut)
-		AppLog.Infof("write commands enabled: %d use case(s) registered (%v)", len(writes.Names()), writes.Names())
+		AppLog.Infof("write commands enabled: %d use case(s) registered (%v)", len(registered), registered)
 	}
 
 	// 8. Generic feature-based scanner.
@@ -328,6 +340,13 @@ func (a *App) onWriteUseCaseEvent(ski string, entity spineapi.EntityRemoteInterf
 	addr := entityAddrString(entity)
 	entType := string(entity.EntityType())
 	for _, uc := range writes.All() {
+		// Honor the per-use-case security gate: a disabled use case must never
+		// be announced even if it happens to be compatible with the entity.
+		// (In practice a disabled use case was never bound, so it should not
+		// receive events at all — this guard is defense-in-depth.)
+		if !a.cfg.UseCaseEnabled(uc.Name()) {
+			continue
+		}
 		if !uc.IsCompatible(entity) {
 			continue
 		}

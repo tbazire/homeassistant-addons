@@ -42,3 +42,69 @@ func TestDefaultLPCMaxLimitWIsResidential(t *testing.T) {
 		t.Errorf("DefaultLPCMaxLimitW = %v, want <= 100000 (sanity upper bound)", DefaultLPCMaxLimitW)
 	}
 }
+
+// TestUseCaseEnabled pins the per-use-case security gate. This is the single
+// predicate BindAll and the daemon loops consult; getting it wrong would mean
+// either (a) a use case binds despite the user leaving it off — a phantom HA
+// entity and an unwanted command surface — or (b) a use case the user enabled
+// silently stays inert. The fail-closed default for unknown names is the most
+// security-relevant case: a future use case shipped before its toggle is wired
+// must NOT become active by accident.
+func TestUseCaseEnabled(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  *Config
+		uc   string
+		want bool
+	}{
+		{
+			name: "lpc off when flag false",
+			cfg:  &Config{LPCEnabled: false, OHPCFEnabled: true},
+			uc:   "lpc",
+			want: false,
+		},
+		{
+			name: "lpc on when flag true",
+			cfg:  &Config{LPCEnabled: true, OHPCFEnabled: false},
+			uc:   "lpc",
+			want: true,
+		},
+		{
+			name: "ohpcf off when flag false",
+			cfg:  &Config{LPCEnabled: true, OHPCFEnabled: false},
+			uc:   "ohpcf",
+			want: false,
+		},
+		{
+			name: "ohpcf on when flag true",
+			cfg:  &Config{LPCEnabled: false, OHPCFEnabled: true},
+			uc:   "ohpcf",
+			want: true,
+		},
+		{
+			name: "unknown use case fails closed (all off)",
+			cfg:  &Config{LPCEnabled: false, OHPCFEnabled: false},
+			uc:   "future_lpp",
+			want: false,
+		},
+		{
+			name: "unknown use case fails closed even when both known are on",
+			cfg:  &Config{LPCEnabled: true, OHPCFEnabled: true},
+			uc:   "future_opev",
+			want: false,
+		},
+		{
+			name: "empty name fails closed",
+			cfg:  &Config{LPCEnabled: true, OHPCFEnabled: true},
+			uc:   "",
+			want: false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.cfg.UseCaseEnabled(c.uc); got != c.want {
+				t.Errorf("UseCaseEnabled(%q) = %v, want %v", c.uc, got, c.want)
+			}
+		})
+	}
+}

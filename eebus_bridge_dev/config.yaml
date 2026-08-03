@@ -23,7 +23,7 @@
 #   https://developers.home-assistant.io/docs/add-ons/configuration
 
 name: EEBUS Bridge (Dev)
-version: "0.6.6-dev"
+version: "0.6.7-dev"
 slug: eebus_bridge_dev
 description: >-
   DEVELOPMENT channel of the EEBUS Bridge. Same code as the production
@@ -69,6 +69,8 @@ options:
     use_cases: "auto"
     device_profile: "auto"
     lpc_max_limit_w: 0
+    lpc_enabled: false
+    ohpcf_enabled: false
 schema:
   log_level: list(trace|debug|info|warning|error)
   poll_interval: int(1,86400)?
@@ -90,3 +92,5 @@ schema:
     use_cases: match(^(auto|[a-z]+(,[a-z]+)*)$)
     device_profile: list(auto|heatpump|evse|inverter|battery|generic)
     lpc_max_limit_w: int(0,1000000)?
+    lpc_enabled: bool
+    ohpcf_enabled: bool
