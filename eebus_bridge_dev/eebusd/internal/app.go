@@ -376,7 +376,7 @@ func (a *App) onWriteUseCaseEvent(ski string, entity spineapi.EntityRemoteInterf
 // (default 100 when the field is omitted), so a missing range would silently
 // cap the slider at 100 W. The fallback uses the configurable
 // EffectiveLPCMaxLimit() so the operator can raise it for atypical hardware.
-// Non-number components (climate/switch/select) get nil — they ignore ranges.
+// Non-number components (buttons/switch/select) get nil — they ignore ranges.
 //
 // Extracted from onWriteUseCaseEvent so the fallback rule is unit-testable
 // without a populated write-use-case registry.

@@ -191,8 +191,8 @@ func TestReExports(t *testing.T) {
 	// Each shipped module declares its HA component + unit; assert the
 	// contract so a silent rename breaks the test instead of HA discovery.
 	if uc := Get("ohpcf"); uc != nil {
-		if uc.HAComponent() != "climate" {
-			t.Errorf("ohpcf.HAComponent = %q, want climate", uc.HAComponent())
+		if uc.HAComponent() != "buttons" {
+			t.Errorf("ohpcf.HAComponent = %q, want buttons", uc.HAComponent())
 		}
 	}
 	if uc := Get("lpc"); uc != nil {

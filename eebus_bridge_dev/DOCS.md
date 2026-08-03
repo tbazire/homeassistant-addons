@@ -115,7 +115,7 @@ device reconnect does not create duplicate sensors.
 | Measurements not updating | Set `poll_interval: 30`; check the device is online; check MQTT messages with `mosquitto_sub -t 'eebus/#' -v`. |
 | HA sensors missing | Confirm discovery messages: `mosquitto_sub -t 'homeassistant/sensor/eebus_bridge/#' -v`. |
 | Wrong device name in HA | The `manufacturer` kind provides brand/model. If missing, the device exposes no DeviceClassification server feature. |
-| Write command has no effect | `write.enable` must be `true`. Confirm the entity appears as a climate/number in HA and check the bridge log for `command result status=error`. The device may simply not support the requested action (e.g. a compressor that is not pausable). |
+| Write command has no effect | `write.enable` must be `true` and the per-use-case toggle (`write.lpc_enabled` / `write.ohpcf_enabled`) too. Confirm the entity appears as a button/number in HA and check the bridge log for `command result status=error`. The device may simply not support the requested action (e.g. a compressor that is not pausable). |
 
 ## Write commands (control entities)
 
@@ -139,7 +139,8 @@ HA UI ──► MQTT command_topic ──► eebus-bridge ──► stdin NDJSON
    when `write.enable` is set.
 2. When a paired device announces support for one of them via SPINE, `eebusd`
    emits a `controllable` NDJSON line to the bridge.
-3. The bridge creates the matching HA entity (a `climate` for OHPCF) and
+3. The bridge creates the matching HA entities (buttons for OHPCF, a `number`
+   for LPC) and
    subscribes to its `command_topic`s.
 4. When the user changes a mode/preset in HA, the bridge encodes the action as
    a `command` NDJSON line and writes it to `eebusd`'s stdin.
@@ -155,7 +156,7 @@ HA UI ──► MQTT command_topic ──► eebus-bridge ──► stdin NDJSON
 | `write.use_cases` | string | `"auto"` | `"auto"` activates every use case the device announces it supports. Set to a comma-separated list (e.g. `"ohpcf"`) to restrict to specific ones. |
 | `write.device_profile` | enum | `"auto"` | `auto` = trust the entity types the device advertises (recommended). `heatpump` / `evse` / `inverter` / `battery` / `generic` restrict discovery to that device family — useful when several devices are paired but only one should be controllable. |
 | `write.lpc_enabled` | bool | `false` | Per-use-case security toggle for LPC (power consumption limit). Must be `true` for the LPC `number` entity and its sensors to appear. **Opt-in:** `write.enable: true` alone is not enough — see [Per-use-case toggles](#per-use-case-toggles) below. |
-| `write.ohpcf_enabled` | bool | `false` | Per-use-case security toggle for OHPCF (heat-pump compressor flexibility). Must be `true` for the OHPCF `climate` entity and its sensors to appear. **Opt-in:** `write.enable: true` alone is not enough — see [Per-use-case toggles](#per-use-case-toggles) below. |
+| `write.ohpcf_enabled` | bool | `false` | Per-use-case security toggle for OHPCF (heat-pump compressor flexibility). Must be `true` for the OHPCF buttons and their sensors to appear. **Opt-in:** `write.enable: true` alone is not enough — see [Per-use-case toggles](#per-use-case-toggles) below. |
 | `write.lpc_max_limit_w` | int | `0` | Fallback upper bound (W) for the LPC power-limit slider when the device does not advertise a nominal max. `0` = built-in default (25000 W). Raise it for atypical hardware (e.g. a commercial wallbox); the device's SPINE layer still rejects genuinely out-of-range values. |
 
 ### Per-use-case toggles
@@ -207,10 +208,10 @@ write:
 
 | Use case | EEBUS name | Typical devices | HA entity | Actions |
 |----------|-----------|-----------------|-----------|---------|
-| **OHPCF** | Optimization of Self-Consumption by Heat-Pump Compressor Flexibility | Heat pumps (any brand exposing the `SmartEnergyManagementPs` feature: e.g. Saunier Duval/Vaillant VR920, …) | `climate` | modes `off` (abort) / `auto` (schedule); presets `pause` / `resume` |
+| **OHPCF** | Optimization of Self-Consumption by Heat-Pump Compressor Flexibility | Heat pumps (any brand exposing the `SmartEnergyManagementPs` feature: e.g. Saunier Duval/Vaillant VR920, …) | `button` ×4 + `sensor` (process_state) | buttons `schedule` / `pause` / `resume` / `abort` (filtered by capability) |
 | **LPC** | Limitation of Power Consumption | Any controllable system exposing `LoadControl` (heat pumps, wallboxes, inverters, batteries, sub-meters) | `number` | power limit in W (set / clear) |
 | LPP *(planned)* | Limitation of Power Production | Inverters | `number` | production limit in W |
-| OPEV / OSCEV *(planned)* | EV charging control | Wallboxes | `number` / `climate` | per-phase current obligation/recommendation |
+| OPEV / OSCEV *(planned)* | EV charging control | Wallboxes | `number` / `select` | per-phase current obligation/recommendation |
 
 This list grows as new use case modules ship. Adding a use case is a
 self-contained module under `eebusd/internal/writes/<uc>/` that registers
@@ -221,22 +222,43 @@ EBUS-conformant device that advertises the use case, not a specific brand.
 ### OHPCF example (heat pump)
 
 With `write.enable: true` **and** `write.ohpcf_enabled: true`, pairing a heat
-pump that exposes OHPCF produces a single `climate` entity per compatible
-compressor entity:
+pump that exposes OHPCF produces a set of **button** entities (one per action)
+plus a **process_state sensor** per compatible compressor entity:
 
-- **Mode `off`** → abort the optional power consumption process.
-- **Mode `auto`** → schedule the process (start immediately).
-- **Preset `pause`** → pause the running compressor.
-- **Preset `resume`** → resume a paused compressor.
+- **`button.schedule`** → start the optional power consumption process now.
+- **`button.pause`** → pause the running compressor *(only if `is_pausable`)*.
+- **`button.resume`** → resume a paused compressor *(only if `is_pausable`)*.
+- **`button.abort`** → abort the running process *(only if `is_stoppable`)*.
 
-The entity's `action` reflects the real compressor state (`heating`, `idle`,
-`off`). If the device rejects a command (e.g. the compressor is not pausable),
-the action does not change and the bridge log explains the reason under
-`command result status=error`.
+Buttons are momentary triggers: pressing one fires the matching SPINE command
+once. They have no state of their own — the process state lives in the sensor
+below. The buttons offered are filtered by device capability exactly as the old
+climate presets were: `pause`/`resume` appear only when the compressor
+advertises `is_pausable`, `abort` only when `is_stoppable`. A button the device
+cannot honour is never exposed. If the device rejects a command at run time
+(e.g. aborting when no process is active), the bridge log explains the reason
+under `command result status=error`.
 
-In addition to the `climate` control entity, OHPCF exposes **read-only sensors**
-from the data the compressor advertises. They attach to the same device and
-entity as the `climate` entity, so the whole picture is grouped together:
+The compressor's real-time state is exposed as a read-only **`process_state`
+sensor**, which carries the raw SPINE enum name:
+
+| State | Meaning |
+|-------|---------|
+| `available` | No process scheduled |
+| `scheduled` | A process is planned but not yet running |
+| `running` | The compressor is actively consuming |
+| `paused` | The compressor is paused but ready to resume |
+| `completed` | The process finished normally |
+| `stopped` | The process was aborted |
+
+This is a faithful reflection of the device — unlike the former climate
+`action` (`heating`/`idle`/`off`), which conflated several distinct states into
+the same value. That mismatch is what motivated the move from `climate` to
+buttons + sensor.
+
+In addition, OHPCF exposes **read-only sensors** from the data the compressor
+advertises. They attach to the same device and entity as the buttons, so the
+whole picture is grouped together:
 
 | Sensor | HA type | Meaning |
 |--------|---------|---------|
@@ -249,8 +271,14 @@ entity as the `climate` entity, so the whole picture is grouped together:
 | `is_stoppable` | `binary_sensor` | Whether the CEM may abort the process |
 
 These are informational (no command surface). `is_pausable`/`is_stoppable` also
-drive which presets the `climate` entity offers (see the per-entity action
-filtering introduced in 0.5.1-dev).
+drive which buttons are offered (see the per-entity action filtering introduced
+in 0.5.1-dev).
+
+> ℹ️ **Upgrading from ≤ 0.6.7-dev:** the OHPCF `climate` entity will disappear
+> from HA on update, replaced by the buttons + `process_state` sensor. This is
+> intentional — the climate representation did not match OHPCF semantics. Any
+> automation referencing the climate entity (mode/preset) must be re-pointed at
+> the corresponding button.
 
 ### LPC example (power consumption limit)
 

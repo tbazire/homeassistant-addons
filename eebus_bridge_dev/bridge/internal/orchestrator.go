@@ -134,30 +134,32 @@ func (o *Orchestrator) handleEvent(ev Event, mapper *Mapper, mqtt *MQTTClient, e
 	case ev.Controllable != nil:
 		// A remote entity just announced support for a write use case (OHPCF,
 		// LPC, …), or — on a subsequent line — refreshed the controllable's
-		// state (e.g. the OHPCF compressor transitioned running → paused).
-		// The first call publishes discovery + subscribes to command topics;
-		// every call (including refreshes) republishes the state/action so
-		// the climate entity's action topic tracks the device in real time.
-		disc := mapper.OnControllable(ev.Controllable)
-		if disc.Config != nil {
-			o.publishDiscovery(mqtt, disc)
-			// Subscribe to command topics. Use a closure capturing the
-			// controllable context so the inbound handler can build a Command
-			// and route it to eebusd's stdin.
-			c := ev.Controllable
-			for _, topic := range disc.CommandTopics {
-				cmdTopic := topic
-				o.subscribeCommand(mqtt, cmdTopic, c, eebusd)
+		// state. OnControllable returns one descriptor per HA entity to
+		// publish: a single one for a number (LPC), or one per button for the
+		// OHPCF buttons component. The first publish of each also subscribes
+		// to its command topics; refreshes (state-only descriptors) just
+		// republish state.
+		c := ev.Controllable
+		for _, disc := range mapper.OnControllable(c) {
+			if disc.Config != nil {
+				o.publishDiscovery(mqtt, disc)
+				// Subscribe to command topics. Use a closure capturing the
+				// controllable context so the inbound handler can build a
+				// Command and route it to eebusd's stdin.
+				for _, topic := range disc.CommandTopics {
+					cmdTopic := topic
+					o.subscribeCommand(mqtt, cmdTopic, c, eebusd)
+				}
 			}
-		}
-		// Always refresh state (and action, when present). On first announce
-		// this seeds HA so it does not show "unknown"; on refreshes this
-		// propagates device-driven transitions. publishState is a no-op when
-		// the topic or value is empty, so climate/number components are both
-		// handled uniformly here.
-		o.publishState(mqtt, disc.StateTopic, disc.StateValue)
-		if disc.ActionTopic != "" {
-			o.publishState(mqtt, disc.ActionTopic, disc.ActionValue)
+			// Refresh state (and action, when present). On first announce this
+			// seeds HA so it does not show "unknown"; on refreshes this
+			// propagates device-driven transitions. publishState is a no-op
+			// when the topic or value is empty, so components with no state
+			// (buttons) are handled uniformly here.
+			o.publishState(mqtt, disc.StateTopic, disc.StateValue)
+			if disc.ActionTopic != "" {
+				o.publishState(mqtt, disc.ActionTopic, disc.ActionValue)
+			}
 		}
 
 	case ev.UcSignal != nil:
@@ -242,34 +244,34 @@ func (o *Orchestrator) subscribeCommand(mqtt *MQTTClient, cmdTopic string, c *Co
 // triple for the NDJSON Command wire format. Returns ok=false for payloads we
 // do not know how to translate (the orchestrator logs and drops them).
 //
-// Routing is based on the topic suffix:
-//   - /mode/cmd   → off→<uc>.abort, auto/heat/cool→<uc>.schedule (climate)
-//   - /preset/cmd → pause→<uc>.pause, resume/none/""→<uc>.resume (climate)
-//   - /value/cmd  → <uc>.set with the parsed float value (number entities)
+// Routing is based on the topic path:
+//   - .../btn/<action>/cmd → <uc>.<action> (button entities; payload ignored —
+//     a button is a momentary trigger. The action is carried by the topic, not
+//     the payload, so each button maps to exactly one op.)
+//   - .../value/cmd        → <uc>.set / <uc>.clear (number entities; payload is
+//     the numeric value, empty clears)
 //
 // The same decoder works for any use case regardless of component.
 func decodeHACommand(topic, payload string, c *Controllable) (op string, value float64, unit string, ok bool) {
-	p := strings.TrimSpace(strings.ToLower(payload))
 	switch {
-	case strings.HasSuffix(topic, "/mode/cmd"):
-		switch p {
-		case "off":
-			return c.UseCase + ".abort", 0, "", true
-		case "auto", "heat", "cool":
+	case isButtonCmdTopic(topic):
+		// Button: extract the action from the /btn/<action>/cmd segment. The
+		// payload (HA sends "PRESS") is irrelevant — pressing the button is the
+		// intent, and the topic already names the action.
+		action := buttonActionFromTopic(topic)
+		if action == "" {
+			return "", 0, "", false
+		}
+		// schedule is the only OHPCF action that takes an argument (a start
+		// delay in seconds); pressing the button means "start now".
+		if action == "schedule" {
 			return c.UseCase + ".schedule", 0, "seconds", true
 		}
-	case strings.HasSuffix(topic, "/preset/cmd"):
-		switch p {
-		case "pause":
-			return c.UseCase + ".pause", 0, "", true
-		case "resume", "none", "":
-			return c.UseCase + ".resume", 0, "", true
-		}
+		return c.UseCase + "." + action, 0, "", true
+
 	case strings.HasSuffix(topic, "/value/cmd"):
 		// Number entities carry a numeric payload (e.g. a watts limit). Parse
-		// the trimmed original payload (NOT the lowercased one — parsing digits
-		// is case-insensitive anyway, but we avoid any future locale surprise).
-		// An empty payload clears the limit.
+		// the trimmed payload. An empty payload clears the limit.
 		raw := strings.TrimSpace(payload)
 		if raw == "" {
 			return c.UseCase + ".clear", 0, c.Unit, true
@@ -281,6 +283,33 @@ func decodeHACommand(topic, payload string, c *Controllable) (op string, value f
 		return c.UseCase + ".set", v, c.Unit, true
 	}
 	return "", 0, "", false
+}
+
+// isButtonCmdTopic reports whether topic matches the button command pattern
+// .../btn/<action>/cmd. It matches on the "/btn/" segment + "/cmd" suffix so
+// it is robust to the prefix and SKI length.
+func isButtonCmdTopic(topic string) bool {
+	return strings.Contains(topic, "/btn/") && strings.HasSuffix(topic, "/cmd")
+}
+
+// buttonActionFromTopic extracts the <action> segment from a
+// .../btn/<action>/cmd topic. Returns "" if the segment is absent (malformed
+// topic). The action is the path element immediately following the last
+// "/btn/" and preceding "/cmd".
+func buttonActionFromTopic(topic string) string {
+	idx := strings.LastIndex(topic, "/btn/")
+	if idx < 0 {
+		return ""
+	}
+	rest := topic[idx+len("/btn/"):]
+	// Strip the trailing "/cmd".
+	rest = strings.TrimSuffix(rest, "/cmd")
+	// The action is the first path segment (no further slashes expected, but
+	// trim anything after one just in case).
+	if i := strings.Index(rest, "/"); i >= 0 {
+		rest = rest[:i]
+	}
+	return rest
 }
 
 // publishDiscovery emits the HA discovery config message (retained).

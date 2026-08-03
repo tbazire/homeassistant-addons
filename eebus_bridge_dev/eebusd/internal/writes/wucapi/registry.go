@@ -90,20 +90,20 @@ type WriteUseCase interface {
 	Name() string
 
 	// HAComponent is the Home Assistant discovery component this use case is
-	// exposed as ("climate", "number", "switch", "select"). The bridge picks
+	// exposed as ("buttons", "number", "switch", "select"). The bridge picks
 	// the discovery payload builder from this.
 	HAComponent() string
 
 	// HAUnit returns the Home Assistant unit of measurement the exposed entity
 	// uses (e.g. "W" for LPC, "A" for a current-limit use case, "°C" for a
 	// temperature setpoint). It is only meaningful for number-like components;
-	// climate/switch/select ignore it (return ""). Declared by the use case so
+	// buttons/switch/select ignore it (return ""). Declared by the use case so
 	// the bridge stays agnostic of the physical quantity being controlled.
 	HAUnit() string
 
 	// NumberRangeForEntity returns the valid input range for a number-like
 	// control entity, or nil when the use case does not constrain its input
-	// (climate/switch/select use cases, or a number use case whose device-side
+	// (buttons/switch/select use cases, or a number use case whose device-side
 	// ceiling is not known). The daemon forwards a non-nil range to the bridge
 	// so the HA number entity advertises min/max/step; a nil return leaves the
 	// number unbounded (legacy behavior). See NumberRange for the HasMax rule.
