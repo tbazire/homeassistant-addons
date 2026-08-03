@@ -154,7 +154,54 @@ HA UI ──► MQTT command_topic ──► eebus-bridge ──► stdin NDJSON
 | `write.enable` | bool | `false` | Master switch. When `false`, no write use case is registered, no command topic is subscribed, and the add-on stays strictly read-only. |
 | `write.use_cases` | string | `"auto"` | `"auto"` activates every use case the device announces it supports. Set to a comma-separated list (e.g. `"ohpcf"`) to restrict to specific ones. |
 | `write.device_profile` | enum | `"auto"` | `auto` = trust the entity types the device advertises (recommended). `heatpump` / `evse` / `inverter` / `battery` / `generic` restrict discovery to that device family — useful when several devices are paired but only one should be controllable. |
+| `write.lpc_enabled` | bool | `false` | Per-use-case security toggle for LPC (power consumption limit). Must be `true` for the LPC `number` entity and its sensors to appear. **Opt-in:** `write.enable: true` alone is not enough — see [Per-use-case toggles](#per-use-case-toggles) below. |
+| `write.ohpcf_enabled` | bool | `false` | Per-use-case security toggle for OHPCF (heat-pump compressor flexibility). Must be `true` for the OHPCF `climate` entity and its sensors to appear. **Opt-in:** `write.enable: true` alone is not enough — see [Per-use-case toggles](#per-use-case-toggles) below. |
 | `write.lpc_max_limit_w` | int | `0` | Fallback upper bound (W) for the LPC power-limit slider when the device does not advertise a nominal max. `0` = built-in default (25000 W). Raise it for atypical hardware (e.g. a commercial wallbox); the device's SPINE layer still rejects genuinely out-of-range values. |
+
+### Per-use-case toggles
+
+Since 0.6.7-dev, `write.enable` is only the **master switch**: it opens the
+control channel, but it no longer activates any use case by itself. Each use
+case has its own toggle (`write.lpc_enabled`, `write.ohpcf_enabled`), and all
+default to `false`. A use case is bound, announced to the device, and exposed
+in Home Assistant **only** when its toggle is `true`.
+
+This is deliberate: the two shipped use cases control different physical
+quantities (a power limit vs. a heat-pump compressor), and a user who only
+wants one should not have the other silently exposed. A disabled use case
+leaves no trace — no HA entity, no command topic, no sensor — because the
+daemon skips it before it can subscribe to any SPINE event.
+
+> ⚠️ **Upgrading from ≤ 0.6.6-dev:** if you previously set `write.enable: true`,
+> your use cases will stop appearing after the update until you also enable the
+> corresponding toggle(s). This is an intentional safety change, not a bug.
+
+**Example — control a heat pump only (OHPCF), no power-limit surface:**
+
+```yaml
+write:
+  enable: true
+  ohpcf_enabled: true
+  # lpc_enabled stays false (default)
+```
+
+**Example — cap power consumption only (LPC), no heat-pump surface:**
+
+```yaml
+write:
+  enable: true
+  lpc_enabled: true
+  # ohpcf_enabled stays false (default)
+```
+
+**Example — both use cases:**
+
+```yaml
+write:
+  enable: true
+  lpc_enabled: true
+  ohpcf_enabled: true
+```
 
 ### Supported use cases
 
@@ -173,8 +220,9 @@ EBUS-conformant device that advertises the use case, not a specific brand.
 
 ### OHPCF example (heat pump)
 
-With `write.enable: true`, pairing a heat pump that exposes OHPCF produces a
-single `climate` entity per compatible compressor entity:
+With `write.enable: true` **and** `write.ohpcf_enabled: true`, pairing a heat
+pump that exposes OHPCF produces a single `climate` entity per compatible
+compressor entity:
 
 - **Mode `off`** → abort the optional power consumption process.
 - **Mode `auto`** → schedule the process (start immediately).
@@ -206,10 +254,10 @@ filtering introduced in 0.5.1-dev).
 
 ### LPC example (power consumption limit)
 
-With `write.enable: true`, pairing any controllable system that exposes LPC
-(a heat pump, a wallbox, an inverter, a battery, …) produces a single `number`
-entity per compatible entity, representing the active power consumption limit
-in watts (W):
+With `write.enable: true` **and** `write.lpc_enabled: true`, pairing any
+controllable system that exposes LPC (a heat pump, a wallbox, an inverter, a
+battery, …) produces a single `number` entity per compatible entity,
+representing the active power consumption limit in watts (W):
 
 - **Set a value** (e.g. `2000`) → cap the device's consumption at 2000 W.
 - **Clear the limit** (empty input) → remove the cap; the device returns to

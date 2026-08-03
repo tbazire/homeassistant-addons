@@ -36,6 +36,25 @@ func (c *Config) EffectiveLPCMaxLimit() float64 {
 	return DefaultLPCMaxLimitW
 }
 
+// UseCaseEnabled reports whether the named write use case is enabled by config.
+// This is the single source of truth consulted by BindAll (to skip binding) and
+// by the daemon's use-case loops (AddUseCase, onWriteUseCaseEvent) to skip
+// announcing/acting on a disabled use case.
+//
+// The default for any unknown name is false (fail-closed): a future use case
+// that ships before its toggle is wired cannot accidentally become active. Only
+// the two known names (lpc, ohpcf) consult their dedicated flag.
+func (c *Config) UseCaseEnabled(name string) bool {
+	switch name {
+	case "lpc":
+		return c.LPCEnabled
+	case "ohpcf":
+		return c.OHPCFEnabled
+	default:
+		return false
+	}
+}
+
 // Config holds all runtime configuration parsed from command-line flags.
 type Config struct {
 	// Local service
@@ -66,6 +85,16 @@ type Config struct {
 	Commands      bool
 	WriteUseCases string // "auto" (default) or explicit list, e.g. "ohpcf,lpc"
 	WriteProfile  string // "auto" (default) or heatpump|evse|inverter|battery|generic
+
+	// Per-use-case enable flags. These are the actual security gates: even when
+	// Commands is true, a use case is bound/announced only if its flag is true.
+	// Default false (opt-in): write.enable alone binds nothing until the user
+	// explicitly enables each use case. A disabled use case is neither bound to
+	// the local entity nor added to the SPINE service, so it receives no events,
+	// emits no controllable/uc_signal line, and exposes no HA entity — the
+	// cleanest "off" state (no phantom entities, no command topic subscribed).
+	LPCEnabled   bool
+	OHPCFEnabled bool
 
 	// LPCMaxLimitW is the fallback upper bound (watts) applied to the LPC
 	// number entity when the device does not advertise a nominal maximum
@@ -113,8 +142,16 @@ func (c *Config) RegisterFlags(fs *flag.FlagSet) {
 	// Write commands. -commands turns on the stdin reader; -write-usecases and
 	// -write-profile are advisory filters the use case modules may consult.
 	fs.BoolVar(&c.Commands, "commands", false, "accept NDJSON command lines on stdin (enables write use cases)")
-	fs.StringVar(&c.WriteUseCases, "write-usecases", "auto", `comma-separated use cases to enable, or "auto"`)
+	fs.StringVar(&c.WriteUseCases, "write-usecases", "auto", `comma-separated use cases to enable, or "auto" (advisory)`)
 	fs.StringVar(&c.WriteProfile, "write-profile", "auto", "device profile hint: auto|heatpump|evse|inverter|battery|generic")
+
+	// Per-use-case security toggles. Default false (opt-in): the user MUST
+	// explicitly enable each write use case, even when -commands is set. A
+	// disabled use case is not bound, not added to the service, and emits no
+	// entities. This is the single source of truth consulted by BindAll and
+	// the daemon's use-case loops (see Config.UseCaseEnabled).
+	fs.BoolVar(&c.LPCEnabled, "write-lpc-enabled", false, "enable the LPC write use case (opt-in)")
+	fs.BoolVar(&c.OHPCFEnabled, "write-ohpcf-enabled", false, "enable the OHPCF write use case (opt-in)")
 
 	// LPCMaxLimitW: fallback max for the LPC number entity when the device does
 	// not expose a nominal max. See Config.LPCMaxLimitW for the rationale.

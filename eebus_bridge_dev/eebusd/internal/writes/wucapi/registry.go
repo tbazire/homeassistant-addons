@@ -219,6 +219,17 @@ func Get(name string) WriteUseCase {
 	return registry[name]
 }
 
+// Unregister removes a use case from the registry by name. It is intended for
+// test cleanup so a test that registers a fake use case does not leak it into
+// later tests (or panic on a duplicate Register when -count > 1). It is a
+// no-op if the name is not present. Production code MUST NOT call this: the
+// shipped use cases register once at init() and are never removed.
+func Unregister(name string) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	delete(registry, name)
+}
+
 // All returns every registered use case, sorted by name for deterministic
 // ordering (stable logs, stable HA discovery order).
 func All() []WriteUseCase {

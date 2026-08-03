@@ -91,11 +91,19 @@ main() {
         # does not advertise a nominal max. 0 = eebusd default (25000). Without
         # an explicit max, Home Assistant caps the slider at 100.
         export EEBUS_WRITE_LPC_MAX_LIMIT_W="$(bashio::config 'write.lpc_max_limit_w')"
-        bashio::log.warning "write commands ENABLED — the add-on can now control the device (profile=$(bashio::config 'write.device_profile'), use_cases=$(bashio::config 'write.use_cases'))"
+        # Per-use-case security toggles (opt-in). Even with write.enable=true,
+        # a use case is bound only if its own toggle is true. Defaults to false
+        # so flipping write.enable alone activates nothing until the user
+        # explicitly opts in per use case.
+        export EEBUS_WRITE_LPC_ENABLED="$(bashio::config 'write.lpc_enabled')"
+        export EEBUS_WRITE_OHPCF_ENABLED="$(bashio::config 'write.ohpcf_enabled')"
+        bashio::log.warning "write commands ENABLED — the add-on can now control the device (profile=$(bashio::config 'write.device_profile'), use_cases=$(bashio::config 'write.use_cases'), lpc=$(bashio::config 'write.lpc_enabled'), ohpcf=$(bashio::config 'write.ohpcf_enabled'))"
     else
         export EEBUS_WRITE_ENABLE="false"
         export EEBUS_WRITE_USE_CASES="auto"
         export EEBUS_WRITE_DEVICE_PROFILE="auto"
+        export EEBUS_WRITE_LPC_ENABLED="false"
+        export EEBUS_WRITE_OHPCF_ENABLED="false"
     fi
 
     # 4. Exec the bridge. s6-overlay now supervises it; SIGTERM propagates.

@@ -23,6 +23,51 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.6.7-dev] - 2026-08-02
+
+Per-use-case security toggles. Until now `write.enable` was an all-or-nothing
+master switch: flipping it bound **every** shipped write use case (OHPCF + LPC)
+at once, so a user who only wanted to drive their heat pump also exposed a
+power-limit command surface on every controllable system on the network. This
+release makes each use case opt-in independently, with a fail-closed default.
+
+### Added
+
+- **`write.lpc_enabled` and `write.ohpcf_enabled`** (bool, default `false`).
+  Each toggle gates one write use case independently of the others. A use case
+  is bound, announced to the SPINE service, and exposed in HA **only** when its
+  toggle is `true` — otherwise it is skipped entirely.
+- **Fail-closed default for unknown use cases.** `Config.UseCaseEnabled` returns
+  `false` for any name that is not explicitly wired (lpc / ohpcf). A future use
+  case shipped before its toggle is added cannot accidentally become active.
+
+### Security
+
+- **A disabled use case creates no surface at all.** The filter runs at three
+  points in the daemon — before `Bind` (so the use case never subscribes to
+  SPINE events), before `AddUseCase` (so it is not announced to the device),
+  and before each `controllable`/`uc_signal` emission (defense-in-depth). There
+  is therefore **no HA entity, no command topic, and no uc_signal** for a use
+  case the user has not explicitly enabled — the event path that would produce
+  them does not exist.
+
+### Changed
+
+- **`write.enable: true` alone now binds nothing.** (Breaking.) The master
+  switch opens the control channel, but each use case must additionally be
+  turned on with its own toggle. To enable LPC only, for example, set both
+  `write.enable: true` and `write.lpc_enabled: true` (leaving `ohpcf_enabled`
+  `false`). Rationale: this is the dev add-on still in stabilisation, and no
+  production user has `write.enable` on; the opt-in default was explicitly
+  requested as a safety measure.
+- **`writes.BindAll` now takes an `enabled func(string) bool` predicate**
+  (signature change). The predicate is consulted before each `uc.Bind` so a
+  disabled use case is never wired. Passing `nil` preserves the legacy
+  "bind everything" behaviour (used by tests).
+- **`wucapi.Unregister`** added (test helper) so a test that registers a fake
+  use case can clean up after itself without panicking on a duplicate under
+  `-count > 1`. Production code must not call it.
+
 ## [0.6.6-dev] - 2026-08-02
 
 Fixes the LPC consumption-limit sensor staying frozen on its last value after
