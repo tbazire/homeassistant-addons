@@ -149,8 +149,17 @@ func (c Config) Args() []string {
 		args = append(args, "-write-lpc-max-limit-w", strconv.Itoa(c.WriteLPCMaxLimitW))
 		// Per-use-case security toggles (opt-in). A use case is active only when
 		// both -commands and its own flag are set.
-		args = append(args, "-write-lpc-enabled", strconv.FormatBool(c.WriteLPCEnabled))
-		args = append(args, "-write-ohpcf-enabled", strconv.FormatBool(c.WriteOHPCFEnabled))
+		//
+		// IMPORTANT: bool flags MUST be emitted as "-flag=value" (single token),
+		// NOT "-flag value" (two tokens). Go's flag package treats a space-
+		// separated value for a bool flag as a positional argument, which stops
+		// flag parsing at that point — so any flag after the first bool would be
+		// silently dropped. This is exactly the bug that shipped in 0.6.7:
+		// OHPCFEnabled was never parsed because -write-ohpcf-enabled came after
+		// the space-separated -write-lpc-enabled value, so OHPCF never bound and
+		// its buttons never appeared in Home Assistant.
+		args = append(args, "-write-lpc-enabled="+strconv.FormatBool(c.WriteLPCEnabled))
+		args = append(args, "-write-ohpcf-enabled="+strconv.FormatBool(c.WriteOHPCFEnabled))
 	}
 	return args
 }
