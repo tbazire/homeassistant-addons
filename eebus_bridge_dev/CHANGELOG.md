@@ -23,6 +23,34 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.6.9-dev] - 2026-08-04
+
+Fixes a regression introduced in 0.6.7: the OHPCF (and LPC) write use cases
+never activated even when the user set `write.ohpcf_enabled: true`, so the
+OHPCF buttons introduced in 0.6.8 never appeared in Home Assistant.
+
+### Fixed
+
+- **Write use-case toggles now reach the daemon.** The bridge forwarded the
+  per-use-case enable flags as two space-separated tokens
+  (`-write-ohpcf-enabled true`), but Go's `flag` package does **not** consume a
+  separate value for a bool flag — it sets the flag from the bare token and
+  treats the following word (`true`) as a positional argument, which **stops
+  flag parsing**. As a result only the first bool flag was ever parsed; the
+  second (`-write-ohpcf-enabled`) was silently swallowed, OHPCF stayed disabled,
+  its use case was never bound, and no `controllable`/`uc_signal` line was ever
+  emitted toward the bridge — so no buttons and no `process_state` sensor
+  appeared. The bridge now emits every bool flag as a single `-flag=value`
+  token, which Go's flag package parses correctly.
+
+### Security
+
+- No change to the security posture. The fail-closed default (a use case is
+  active only when its own toggle is true) behaved exactly as designed — in
+  fact it is what made the bug visible as "nothing appears" rather than
+  "everything appears". The fix only corrects the flag transmission so a toggle
+  the user explicitly enabled is now honored.
+
 ## [0.6.8-dev] - 2026-08-03
 
 OHPCF is no longer a `climate` entity. The climate representation was a poor
