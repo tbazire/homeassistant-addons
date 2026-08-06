@@ -23,6 +23,43 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.7.0-dev] - 2026-08-06
+
+Security hardening of the dev channel: AppArmor is now enabled and the daemon
+no longer runs as root. This is a dev-channel preview ahead of the production
+add-on (which still runs as root with AppArmor disabled until this is validated
+end-to-end here on a real device).
+
+### Security
+
+- **AppArmor is now enabled.** `config.yaml` had `apparmor: false`, which
+  **disables** AppArmor entirely — not "uses HA's default profile", as the
+  documentation erroneously claimed. Changed to `apparmor: true` so the add-on
+  runs under Home Assistant's default AppArmor profile, adding mandatory
+  access control on top of the container boundary. The
+  `test_config_validation.py` gate now asserts `apparmor is True` so it can
+  never silently regress.
+- **The daemon now runs as a non-root user.** The runtime image creates a
+  dedicated unprivileged user `eebus` (uid/gid 911). s6-overlay's `/init`
+  still starts as root (it must, to supervise and to read `/data/options.json`
+  which the Supervisor writes `0600 root:root`), but `run.sh` drops to `eebus`
+  via `s6-setuidgid` *before* exec-ing `eebus-bridge`, so neither the bridge
+  nor its `eebusd` child subprocess ever runs as root. `/data/eebus` is chown'd
+  to `eebus:eebus` (still as root) during the privileged startup so the
+  daemon can write its cert/key/ring-buffer there. Port 4711 (>1024), mDNS
+  multicast (the Go zeroconf provider needs no privileges) and outbound MQTT
+  all work unprivileged.
+
+### Fixed
+
+- **Documentation now matches reality.** The Dockerfile header, `config.yaml`
+  posture comment, `DOCS.md` security section and `tests/test_checklist.md`
+  all claimed "non-root" / "AppArmor default profile" while the image actually
+  ran as root with AppArmor disabled. The claims are now true. Note: the
+  repository-root `SECURITY.md` (a shared file covering both add-ons) still
+  makes the same inaccurate claims and will be corrected when the production
+  add-on is migrated to the same posture.
+
 ## [0.6.9-dev] - 2026-08-04
 
 Fixes a regression introduced in 0.6.7: the OHPCF (and LPC) write use cases

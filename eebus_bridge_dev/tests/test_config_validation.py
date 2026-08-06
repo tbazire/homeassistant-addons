@@ -98,6 +98,15 @@ def main() -> int:
     # host_network MUST be true (mDNS multicast + inbound SHIP TCP).
     check(cfg.get("host_network") is True,
           "host_network is true (required for EEBUS mDNS + inbound SHIP)")
+    # AppArmor MUST be enabled (HA default profile). apparmor: false DISABLES
+    # it entirely (a documentation error shipped before 0.7.0-dev: the comment
+    # claimed "left to HA's internal profile", which is what apparmor: true
+    # does). We set it explicitly to true so the add-on runs under HA's default
+    # AppArmor profile (mandatory access control on top of the container).
+    # Omitting the key also defaults to true, but we assert it is set explicitly
+    # so it can never silently regress to false.
+    check(cfg.get("apparmor") is True,
+          "apparmor is true (HA default AppArmor profile enabled)")
 
     # --- Services ------------------------------------------------------------------
     print("Services:")

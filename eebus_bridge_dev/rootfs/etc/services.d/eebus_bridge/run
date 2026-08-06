@@ -25,6 +25,10 @@ main() {
     #    restarts. HA mounts /data at runtime with root ownership.
     local data_dir="${EEBUS_DATA_DIR:-/data/eebus}"
     mkdir -p "${data_dir}"
+    # Chown while we are still root: the daemon drops to the unprivileged
+    # 'eebus' user (uid 911) at the bottom of this script, so /data/eebus must
+    # be writable by that user for scanner.crt/scanner.key/ringbuffer.json.
+    chown -R eebus:eebus "${data_dir}"
 
     # 2. MQTT broker resolution. Supervisor service (Mosquitto add-on) wins by
     #    default; the user can override with explicit mqtt.host.
@@ -107,8 +111,14 @@ main() {
     fi
 
     # 4. Exec the bridge. s6-overlay now supervises it; SIGTERM propagates.
-    bashio::log.info "launching eebus-bridge (broker=${mqtt_host}:${mqtt_port})"
-    exec /usr/local/bin/eebus-bridge
+    #    Drop privileges: everything above ran as root (needed for chown of
+    #    /data/eebus and for bashio to read /data/options.json which HA writes
+    #    0600 root:root). s6-setuidgid execs eebus-bridge as the unprivileged
+    #    'eebus' user; the child eebusd subprocess inherits that uid. The
+    #    exported EEBUS_* env vars are preserved across the uid drop.
+    #    s6-setuidgid is shipped by s6-overlay (no extra apk needed).
+    bashio::log.info "launching eebus-bridge (broker=${mqtt_host}:${mqtt_port}, uid=$(id -u eebus))"
+    exec s6-setuidgid eebus /usr/local/bin/eebus-bridge
 }
 
 main "$@"

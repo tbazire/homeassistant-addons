@@ -10,20 +10,29 @@
 # discovery topic namespace. Only one of them can run at a time on a given
 # Home Assistant instance.
 #
-# Security posture (identical to the production add-on):
+# Security posture (identical to the production add-on, except where noted):
 #   - host_network: true  REQUIRED. EEBUS uses mDNS multicast (UDP 5353) and
 #     expects the inbound SHIP TCP connection to come from the LAN. Anything
 #     less than host networking breaks pairing on most EEBUS gateways.
 #   - No privileged, full_access, host_pid, host_dbus, host_ipc, docker_api,
 #     map, usb, gpio or uart. Absence is asserted by tests/test_config_validation.py.
 #   - init: false is MANDATORY with s6-overlay v3 base images.
-#   - Runs as root (default HA behavior with no privileged capabilities).
+#   - AppArmor enabled (HA default profile) — mandatory access control on top
+#     of the container boundary. Was false before 0.7.0-dev (a documentation
+#     error: false means DISABLED, not "default profile").
+#   - Privilege model: s6-overlay's /init runs as root (it must, to supervise
+#     and to read /data/options.json which HA writes 0600 root:root). The
+#     service script (run.sh) drops to a dedicated unprivileged user 'eebus'
+#     (uid 911) via s6-setuidgid BEFORE exec-ing eebus-bridge, so the daemon
+#     and its eebusd child subprocess never run as root. This is a dev-channel
+#     hardening ahead of the production add-on (which still runs as root until
+#     validated end-to-end here on a real device).
 #
 # Schema vocabulary reference:
 #   https://developers.home-assistant.io/docs/add-ons/configuration
 
 name: EEBUS Bridge (Dev)
-version: "0.6.9-dev"
+version: "0.7.0-dev"
 slug: eebus_bridge_dev
 description: >-
   DEVELOPMENT channel of the EEBUS Bridge. Same code as the production
@@ -41,7 +50,7 @@ startup: services
 boot: auto
 timeout: 30
 host_network: true
-apparmor: false
+apparmor: true
 map:
   - type: data
     read_only: False

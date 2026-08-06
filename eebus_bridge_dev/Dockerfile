@@ -66,9 +66,14 @@ FROM ${BUILD_FROM}
 ARG BUILD_FROM
 ARG BUILD_VERSION
 
-# Run as root. The /data mount is provided by HA at runtime and is writable by root.
-# The add-on runs with host_network: true, which is required for EEBUS mDNS.
-# No need for a dedicated non-root user since no privileged capabilities are used.
+# Create an unprivileged user for the daemon. We do NOT add a USER directive:
+# s6-overlay's /init MUST run as root (supervision tree, signal handling, and
+# reading /data/options.json which HA writes as 0600 root:root). run.sh drops
+# to this user via s6-setuidgid right before exec-ing eebus-bridge, AFTER the
+# privileged startup bits (chown /data/eebus + all bashio reads). See the
+# security posture in config.yaml for the rationale.
+RUN addgroup -S -g 911 eebus \
+ && adduser  -S -D -H -u 911 -G eebus eebus
 
 # Copy the static binaries in.
 COPY --from=eebusd-builder /out/eebusd /usr/local/bin/eebusd

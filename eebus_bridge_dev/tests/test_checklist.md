@@ -69,6 +69,14 @@ Tested device / model: ____________________   Date: __________
 - [ ] No secret in the logs after a full run with `log_level: trace`.
 - [ ] `pairing.secret`, MQTT password are never echoed.
 - [ ] `/data/eebus/scanner.key` is mode `0600` inside the container.
+- [ ] Daemon runs as non-root: inside the running container
+      `ps -o user= -p $(pidof eebus-bridge)` shows `eebus` (not `root`),
+      and `id eebus` reports uid 911. `/init` and the `run.sh` startup bits
+      legitimately run as root; only the daemon must be non-root.
+- [ ] AppArmor is active: `docker inspect <id> --format '{{.AppArmorProfile}}'`
+      shows a non-empty profile name (e.g. `default`), and `dmesg | grep -i
+      apparmor | grep DENIED` shows no denials for the bridge/eebusd binaries
+      during a full pairing + MQTT discovery cycle.
 
 ## 9. Shutdown
 

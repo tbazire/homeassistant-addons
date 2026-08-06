@@ -342,7 +342,15 @@ See [`../SECURITY.md`](../SECURITY.md) for the full threat model and the
 list of mandatory rules. In short:
 
 - No secret is ever in the image, the repository, or a log line.
-- The container runs non-root.
+- The daemon runs as a non-root user (`eebus`, uid 911). Only s6-overlay
+  `/init` and the privileged startup bits in `run.sh` (chown of `/data/eebus`
+  and the bashio reads of `/data/options.json`, which HA writes `0600
+  root:root`) run as root; `run.sh` then drops to `eebus` via
+  `s6-setuidgid` before exec-ing `eebus-bridge`, so neither the bridge nor its
+  `eebusd` child subprocess ever runs as root. (Dev-channel hardening ahead of
+  the production add-on.)
+- AppArmor is enabled (`apparmor: true`) — the add-on runs under Home
+  Assistant's default AppArmor profile.
 - The only non-default permission is `host_network: true` (justified by EEBUS).
 - Images are Cosign-signed.
 
