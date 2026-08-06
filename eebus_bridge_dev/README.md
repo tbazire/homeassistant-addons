@@ -121,6 +121,15 @@ re-pair. Keep backups.
   `host_network: true`, which is required by the EEBUS protocol (mDNS multicast
   + inbound SHIP TCP). See [`../SECURITY.md`](../SECURITY.md) for the full
   threat model.
+- **Non-root daemon**: s6-overlay's `/init` starts as root (it must, to read
+  `/data/options.json` which HA writes `0600 root:root`), but the service
+  script drops to a dedicated unprivileged user `eebus` (uid `911`) via
+  `s6-setuidgid` *before* exec-ing `eebus-bridge`. The daemon and its `eebusd`
+  child never run as root. This is a dev-channel hardening ahead of the
+  production add-on.
+- **AppArmor enabled**: the add-on runs under Home Assistant's default AppArmor
+  profile (`apparmor: true`), adding mandatory access control on top of the
+  container boundary.
 - **Container images are signed with Cosign** — verify with:
   ```
   cosign verify ghcr.io/tbazire/eebus-bridge-dev:0.1.0-dev
