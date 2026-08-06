@@ -23,6 +23,32 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.7.1-dev] - 2026-08-06
+
+Adds a custom AppArmor profile, replacing HA's default. No functional change
+to the daemon; the add-on already had `apparmor: true` since 0.7.0 (HA's
+default profile), this ships a tailored one instead.
+
+### Security
+
+- **Custom AppArmor profile (`apparmor.txt`).** The add-on now ships its own
+  profile instead of running under Home Assistant's generic default. The
+  single-profile policy grants only what the add-on actually needs:
+  - s6-overlay v3 supervision paths (`/init`, `/run/{s6,s6-rc*,service}`,
+    `/package`, `/command`) and bashio helpers, so the container can bootstrap;
+  - the TLS CA bundle (`/etc/ssl/certs`, `openssl.cnf`) — SHIP is TLS-based;
+  - TCP `stream` + UDP `dgram` networking (IPv4/IPv6 + netlink) — covers the
+    inbound SHIP listener (4711), outbound MQTT (1883/8883) and mDNS multicast
+    (5353). Port-level filtering remains Docker's job;
+  - `/data/** rw` — options.json, SHIP cert/key and pairing ring buffer;
+  - privilege-drop capabilities (`chown`/`setuid`/`setgid`/`dac_override`) for
+    the non-root startup phase introduced in 0.7.0.
+  Deliberately NOT granted: `net_bind_service` (port 4711 is > 1024),
+  `net_raw`, `sys_admin`, `ptrace`. The profile is intentionally robust
+  (single permissive profile) over maximally strict, to avoid breaking the app
+  on an untested device; it can be tightened to an inner daemon subprofile
+  once real AppArmor logs have been observed on a deployed instance.
+
 ## [0.7.0-dev] - 2026-08-06
 
 Security hardening of the dev channel: AppArmor is now enabled and the daemon
