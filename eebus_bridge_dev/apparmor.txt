@@ -1,0 +1,107 @@
+#include <tunables/global>
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Bazire
+#
+# Custom AppArmor profile for the eebus_bridge_dev add-on (dev channel).
+#
+# This replaces Home Assistant's default AppArmor profile with a tailored one
+# that grants only what the add-on actually needs:
+#
+#   - s6-overlay v3 supervision (/init, /run/{s6,s6-rc*,service}, /package,
+#     /command) and bashio helpers, so the container can bootstrap.
+#   - Read access to the TLS CA bundle and OpenSSL config: the SHIP protocol
+#     the EEBUS daemon speaks is TLS-based, so it must read /etc/ssl.
+#   - Network: TCP stream (inbound SHIP listener on 4711 + outbound MQTT to
+#     the broker) and UDP dgram (mDNS multicast on 5353 for EEBUS service
+#     discovery). IPv4 + IPv6. Port-level filtering is Docker's job, not
+#     AppArmor's.
+#   - /data/** rw: this is where HA mounts options.json and where the daemon
+#     persists its SHIP cert/key and pairing ring buffer (/data/eebus/).
+#   - Privilege-drop capabilities (chown/setuid/setgid/dac_override): run.sh
+#     chowns /data/eebus to the unprivileged 'eebus' user (uid 911), then
+#     drops to that user via s6-setuidgid before exec-ing the daemon. These
+#     capabilities are only used during the privileged startup phase; the
+#     daemon itself runs without them once the drop has happened.
+#
+# What is deliberately NOT granted:
+#   - capability net_bind_service: the SHIP port 4711 is > 1024, so binding
+#     does not require it.
+#   - capability net_raw: the Go zeroconf mDNS provider uses plain multicast
+#     sockets. If denials appear in dmesg on a specific kernel, add it.
+#   - capability sys_admin / mount: not needed (no namespace or mount tricks).
+#   - ptrace: not needed.
+#
+# Single-profile strategy (permissive): the whole process tree runs under this
+# one outer profile. There is no inner subprofile (cx) confining the daemon
+# binary to a tighter ruleset. This is intentionally robust over maximally
+# strict: a first custom profile should not risk breaking the app on an
+# untested device. The profile can be tightened later (subprofile cx for the
+# daemon) once real AppArmor logs (dmesg / aa-logprof) have been observed on a
+# deployed instance.
+#
+# The first line of the profile block (below) uses the add-on slug. The HA
+# Supervisor rewrites that token to the slug at install time anyway, but
+# keeping it in sync with config.yaml avoids confusion.
+
+profile eebus_bridge_dev flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # --- Capabilities ---------------------------------------------------------
+  # Used only during the privileged startup phase (run.sh, still root):
+  # chown /data/eebus, then s6-setuidgid drops to uid 911. After the drop the
+  # daemon runs without capabilities.
+  file,
+  signal,
+  capability chown,
+  capability setuid,
+  capability setgid,
+  capability dac_override,
+
+  # --- Network --------------------------------------------------------------
+  # SHIP = inbound TCP listener (4711). MQTT = outbound TCP (1883/8883).
+  # mDNS = UDP dgram (5353, multicast). IPv4 + IPv6 + netlink (route lookup).
+  network unix stream,
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network netlink raw,
+
+  # --- s6-overlay v3 supervision -------------------------------------------
+  /init rix,
+  /bin/** ix,
+  /usr/bin/** ix,
+  /usr/local/bin/** rmix,
+  /run/{s6,s6-rc*,service}/** ix,
+  /package/** ix,
+  /command/** ix,
+  /etc/services.d/** rwix,
+  /etc/cont-init.d/** rwix,
+  /etc/cont-finish.d/** rwix,
+  /run/{,**} rwk,
+
+  # --- Bashio ---------------------------------------------------------------
+  /usr/lib/bashio/** ix,
+
+  # --- Add-on data (options.json + SHIP cert/key + pairing ring buffer) ----
+  /data/** rw,
+
+  # --- TLS (SHIP is TLS-based; MQTT may use TLS too) ------------------------
+  /etc/ssl/certs/** r,
+  /etc/ssl/openssl.cnf r,
+  /etc/ca-certificates/** r,
+  /etc/resolv.conf r,
+
+  # --- Misc runtime ---------------------------------------------------------
+  /tmp/** rw,
+  /dev/tty rw,
+  /dev/urandom r,
+  /dev/random r,
+  /proc/** r,
+  /sys/** r,
+
+  # --- Hardening: deny writes to pseudo-filesystems -------------------------
+  deny /proc/** wl,
+  deny /sys/** wl,
+}

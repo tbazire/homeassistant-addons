@@ -127,9 +127,12 @@ re-pair. Keep backups.
   `s6-setuidgid` *before* exec-ing `eebus-bridge`. The daemon and its `eebusd`
   child never run as root. This is a dev-channel hardening ahead of the
   production add-on.
-- **AppArmor enabled**: the add-on runs under Home Assistant's default AppArmor
-  profile (`apparmor: true`), adding mandatory access control on top of the
-  container boundary.
+- **Custom AppArmor profile**: the add-on ships its own `apparmor.txt` (not HA's
+  default). It is a tailored, single-profile policy granting only the s6-overlay
+  supervision paths, the TLS CA bundle, TCP/UDP networking, `/data`, and the
+  privilege-drop capabilities (`chown`/`setuid`/`setgid`) needed for the
+  non-root startup phase. Deliberately no `net_bind_service` (SHIP port 4711 is
+  >1024), no `net_raw`, no `sys_admin`. See [`apparmor.txt`](./apparmor.txt).
 - **Container images are signed with Cosign** — verify with:
   ```
   cosign verify ghcr.io/tbazire/eebus-bridge-dev:0.1.0-dev

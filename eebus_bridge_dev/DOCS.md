@@ -349,8 +349,16 @@ list of mandatory rules. In short:
   `s6-setuidgid` before exec-ing `eebus-bridge`, so neither the bridge nor its
   `eebusd` child subprocess ever runs as root. (Dev-channel hardening ahead of
   the production add-on.)
-- AppArmor is enabled (`apparmor: true`) — the add-on runs under Home
-  Assistant's default AppArmor profile.
+- AppArmor is enabled (`apparmor: true`) and the add-on ships a **custom
+  profile** ([`apparmor.txt`](./apparmor.txt)) instead of HA's default. The
+  single-profile policy grants only the s6-overlay v3 supervision paths, the
+  TLS CA bundle (SHIP is TLS-based), TCP/UDP networking (inbound SHIP 4711 +
+  outbound MQTT + mDNS 5353), `/data`, and the privilege-drop capabilities
+  (`chown`/`setuid`/`setgid`/`dac_override`) needed for the non-root startup
+  phase. It deliberately does NOT grant `net_bind_service` (port 4711 > 1024),
+  `net_raw`, `sys_admin`, or `ptrace`. The profile is intentionally robust
+  (permissive) over maximally strict; it can be tightened to an inner daemon
+  subprofile once real AppArmor logs have been observed on a deployed instance.
 - The only non-default permission is `host_network: true` (justified by EEBUS).
 - Images are Cosign-signed.
 

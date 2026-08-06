@@ -73,10 +73,13 @@ Tested device / model: ____________________   Date: __________
       `ps -o user= -p $(pidof eebus-bridge)` shows `eebus` (not `root`),
       and `id eebus` reports uid 911. `/init` and the `run.sh` startup bits
       legitimately run as root; only the daemon must be non-root.
-- [ ] AppArmor is active: `docker inspect <id> --format '{{.AppArmorProfile}}'`
-      shows a non-empty profile name (e.g. `default`), and `dmesg | grep -i
-      apparmor | grep DENIED` shows no denials for the bridge/eebusd binaries
-      during a full pairing + MQTT discovery cycle.
+- [ ] AppArmor custom profile is loaded and active:
+      `docker inspect <id> --format '{{.AppArmorProfile}}'` shows
+      `eebus_bridge_dev` (the add-on slug = the custom profile name, NOT HA's
+      `default`), and `dmesg | grep -i apparmor | grep DENIED` shows no denials
+      for the bridge/eebusd binaries during a full pairing + MQTT discovery
+      cycle. If DENIED lines appear, the profile in `apparmor.txt` needs the
+      corresponding rule (see the comment block at the top of that file).
 
 ## 9. Shutdown
 
