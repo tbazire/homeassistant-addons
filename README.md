@@ -18,15 +18,12 @@ A collection of Home Assistant add-ons maintained by **Tommy Bazire**.
 
 ## Installation
 
-To use these add-ons in your Home Assistant instance:
+[![Open your Home Assistant instance and show the add add-on repository dialog with a specific repository URL pre-filled.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Ftbazire%2Fhomeassistant-addons)
 
-1. In Home Assistant, go to **Settings → Add-ons → Add-on Store**.
-2. Click the **⋯** menu (top right) → **Repositories**.
-3. Add the following URL:
-   ```
-   https://github.com/tbazire/homeassistant-addons
-   ```
-4. The add-ons from this repository now appear in the store. Click **EEBUS Bridge** (or **EEBUS Bridge (Dev)** for the development channel) → **Install**.
+In HomeAssistant, go to Supervisor > Add-on Store > Repositories
+Add this repo: https://github.com/tbazire/homeassistant-addons
+
+The add-ons from this repository now appear in the store. Click **EEBUS Bridge** (or **EEBUS Bridge (Dev)** for the development channel) → **Install**.
 
 > 💡 Most users want the **production** add-on. The **Dev** channel exists to
 > preview upcoming changes and collect early feedback; it is mutually exclusive
