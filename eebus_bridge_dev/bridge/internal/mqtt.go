@@ -50,10 +50,21 @@ type MQTTOptions struct {
 	Port        int
 	User        string
 	Password    string
+	TLS         bool // true = ssl:// (system CA pool) instead of tcp://
 	ClientID    string
 	WillTopic   string // LWT topic (empty = no LWT)
 	WillOnline  string // payload published as a retained "online" when connected
 	WillOffline string // payload published by the broker if we disconnect ungracefully
+}
+
+// brokerURL builds the paho broker URL. ssl:// makes paho dial with TLS using
+// the system CA pool (external brokers on port 8883, cloud brokers).
+func brokerURL(opts MQTTOptions) string {
+	scheme := "tcp"
+	if opts.TLS {
+		scheme = "ssl"
+	}
+	return fmt.Sprintf("%s://%s:%d", scheme, opts.Host, opts.Port)
 }
 
 // NewMQTTClient constructs a client (does not connect yet).
@@ -61,7 +72,7 @@ func NewMQTTClient(opts MQTTOptions, logger Logger) *MQTTClient {
 	if opts.ClientID == "" {
 		opts.ClientID = "eebus-bridge"
 	}
-	broker := fmt.Sprintf("tcp://%s:%d", opts.Host, opts.Port)
+	broker := brokerURL(opts)
 
 	// The *MQTTClient must exist before the OnConnect closure can reference it
 	// (the closure re-applies subscriptions held on the wrapper). We create

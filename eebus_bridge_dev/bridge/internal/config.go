@@ -39,11 +39,13 @@ type Config struct {
 	Vendor string
 	Port   int
 
-	// MQTT.
+	// MQTT. TLS switches the broker connection from tcp:// to ssl:// (system
+	// CA pool) for external brokers that require it (port 8883, cloud brokers).
 	MQTTHost      string
 	MQTTPort      int
 	MQTTUser      string
 	MQTTPassword  string
+	MQTTTLS       bool
 	MQTTPrefix    string
 	MQTTDiscovery string
 
@@ -84,6 +86,7 @@ func Load() (Config, error) {
 		MQTTPort:           envInt("EEBUS_MQTT_PORT", 1883),
 		MQTTUser:           os.Getenv("EEBUS_MQTT_USER"),
 		MQTTPassword:       os.Getenv("EEBUS_MQTT_PASSWORD"),
+		MQTTTLS:            envBool("EEBUS_MQTT_SSL", false),
 		MQTTPrefix:         envDefault("EEBUS_MQTT_PREFIX", "eebus"),
 		MQTTDiscovery:      envDefault("EEBUS_MQTT_DISCOVERY", "homeassistant"),
 		WriteEnable:        envBool("EEBUS_WRITE_ENABLE", false),
@@ -189,6 +192,7 @@ func (c Config) Redacted() map[string]any {
 		"mqtt_port":             c.MQTTPort,
 		"mqtt_user":             mask(c.MQTTUser),
 		"mqtt_password":         mask(c.MQTTPassword),
+		"mqtt_ssl":              c.MQTTTLS,
 		"mqtt_prefix":           c.MQTTPrefix,
 		"discovery":             c.MQTTDiscovery,
 		"write_enable":          c.WriteEnable,

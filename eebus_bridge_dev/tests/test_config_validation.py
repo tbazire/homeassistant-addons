@@ -134,6 +134,31 @@ def main() -> int:
                 check(isinstance(leaf_type, str) and "password" in leaf_type,
                       f"'{sensitive}' schema is a password type (got {leaf_type!r})")
 
+    # --- MQTT broker options (issue #40) --------------------------------------------
+    # run.sh reads mqtt.host/port/user/password/ssl from the add-on options to
+    # override Supervisor broker discovery. If these fields are missing from the
+    # schema, HA silently rejects them and the override branch is dead code —
+    # exactly the regression reported in issue #40.
+    print("MQTT broker options:")
+    mqtt_schema = (schema.get("mqtt") or {}) if isinstance(schema, dict) else {}
+    if isinstance(mqtt_schema, dict):
+        check(isinstance(mqtt_schema.get("host"), str) and "str" in mqtt_schema["host"],
+              "mqtt.host schema is a str type "
+              f"(got {mqtt_schema.get('host')!r})")
+        check(isinstance(mqtt_schema.get("port"), str) and "port" in mqtt_schema["port"],
+              "mqtt.port schema is a port type "
+              f"(got {mqtt_schema.get('port')!r})")
+        check(isinstance(mqtt_schema.get("user"), str) and "str" in mqtt_schema["user"],
+              "mqtt.user schema is a str type "
+              f"(got {mqtt_schema.get('user')!r})")
+        check(isinstance(mqtt_schema.get("password"), str)
+              and "password" in mqtt_schema["password"],
+              "mqtt.password schema is a password type "
+              f"(got {mqtt_schema.get('password')!r})")
+        check(mqtt_schema.get("ssl") == "bool",
+              "mqtt.ssl schema is bool "
+              f"(got {mqtt_schema.get('ssl')!r})")
+
     # --- License file ---------------------------------------------------------------
     print("License:")
     check(LICENSE_PATH.is_file(), f"LICENSE exists at repo root")

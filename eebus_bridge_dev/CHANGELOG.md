@@ -23,6 +23,44 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.8.0-dev] - 2026-08-15
+
+Adds support for an external MQTT broker, resolving
+[#40](https://github.com/tbazire/homeassistant-addons/issues/40).
+
+### Added
+
+- **External MQTT broker support.** New `mqtt.host`, `mqtt.port`, `mqtt.user`,
+  `mqtt.password` and `mqtt.ssl` options. Setting `mqtt.host` makes the bridge
+  connect to that broker instead of the Supervisor-discovered one (Mosquitto
+  add-on); leaving it empty keeps the auto-discovery behaviour, which stays the
+  default. The bridge and `run.sh` already had the plumbing (`EEBUS_MQTT_*`
+  env vars, user-override branch), but the fields were missing from the add-on
+  `schema:` so Home Assistant silently rejected them — the override was dead
+  code.
+- **TLS to the MQTT broker** (`mqtt.ssl: true`): the connection switches from
+  `tcp://` to `ssl://` with the system CA store, for external brokers that
+  require it (port `8883`, cloud brokers). The broker URL scheme is unit-
+  tested (`brokerURL`).
+- UI labels (translations) and documentation for the five new options,
+  including an explicit startup log line when an external broker is used.
+
+### Fixed
+
+- `mqtt.port` was read unconditionally once `mqtt.host` was set; it is now
+  only read when it has a value, defaulting to `1883`.
+- The `run.sh` comment described the inverse broker-resolution priority
+  (it said "Supervisor first, user override next"; the code does the
+  opposite, which is the intended behaviour).
+
+### Documentation
+
+- README/DOCS: new "External MQTT broker" section with a YAML example, broker
+  resolution priority (user override → Supervisor → fatal error), and a
+  troubleshooting row for unreachable external brokers.
+- Installation instructions updated for newer Home Assistant wording
+  (Settings → Apps → Install Apps), alongside the classic add-on store path.
+
 ## [0.7.1-dev] - 2026-08-06
 
 Adds a custom AppArmor profile, replacing HA's default. No functional change

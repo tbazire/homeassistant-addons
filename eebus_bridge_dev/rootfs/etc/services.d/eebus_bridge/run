@@ -6,7 +6,8 @@
 #
 # Responsibilities:
 #   1. Read the HA options via bashio.
-#   2. Resolve the MQTT broker (Supervisor service first, user override next).
+#   2. Resolve the MQTT broker (user override mqtt.host first, Supervisor
+#      service fallback).
 #   3. Ensure SHIP cert dir (/data/eebus) exists.
 #   4. Export every option as an EEBUS_* env var, then exec eebus-bridge.
 #
@@ -30,18 +31,25 @@ main() {
     # be writable by that user for scanner.crt/scanner.key/ringbuffer.json.
     chown -R eebus:eebus "${data_dir}"
 
-    # 2. MQTT broker resolution. Supervisor service (Mosquitto add-on) wins by
-    #    default; the user can override with explicit mqtt.host.
-    local mqtt_host="" mqtt_port="1883" mqtt_user="" mqtt_pass=""
+    # 2. MQTT broker resolution. An explicit mqtt.host in the add-on options
+    #    (external broker) wins; otherwise fall back to the Supervisor service
+    #    (Mosquitto add-on); if neither is available, fail fast.
+    local mqtt_host="" mqtt_port="1883" mqtt_user="" mqtt_pass="" mqtt_ssl="false"
     if bashio::config.has_value 'mqtt.host'; then
         mqtt_host="$(bashio::config 'mqtt.host')"
-        mqtt_port="$(bashio::config 'mqtt.port')"
+        if bashio::config.has_value 'mqtt.port'; then
+            mqtt_port="$(bashio::config 'mqtt.port')"
+        fi
         if bashio::config.has_value 'mqtt.user'; then
             mqtt_user="$(bashio::config 'mqtt.user')"
         fi
         if bashio::config.has_value 'mqtt.password'; then
             mqtt_pass="$(bashio::config 'mqtt.password')"
         fi
+        if bashio::config.true 'mqtt.ssl'; then
+            mqtt_ssl="true"
+        fi
+        bashio::log.info "Using external MQTT broker from configuration"
     elif bashio::services.available 'mqtt'; then
         mqtt_host="$(bashio::services 'mqtt' 'host')"
         mqtt_port="$(bashio::services 'mqtt' 'port')"
@@ -81,6 +89,7 @@ main() {
     fi
     export EEBUS_MQTT_PREFIX="$(bashio::config 'mqtt.prefix')"
     export EEBUS_MQTT_DISCOVERY="$(bashio::config 'mqtt.discovery_prefix')"
+    export EEBUS_MQTT_SSL="${mqtt_ssl}"
 
     # Write commands (optional, off by default). When enabled, the bridge
     # opens the stdin backchannel to eebusd and subscribes to HA command

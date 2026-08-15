@@ -111,3 +111,62 @@ func boolStr(b bool) string {
 	}
 	return "false"
 }
+
+// TestLoad_MQTTParsing asserts every EEBUS_MQTT_* env var (exported by run.sh,
+// either from an external broker config or from Supervisor discovery) lands in
+// the right Config field, including the TLS toggle added for external brokers.
+func TestLoad_MQTTParsing(t *testing.T) {
+	set := func(k, v string) {
+		t.Cleanup(func() { os.Unsetenv(k) })
+		os.Setenv(k, v)
+	}
+	set("EEBUS_MQTT_HOST", "broker.example.com")
+	set("EEBUS_MQTT_PORT", "8883")
+	set("EEBUS_MQTT_USER", "eebus")
+	set("EEBUS_MQTT_PASSWORD", "secret")
+	set("EEBUS_MQTT_SSL", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.MQTTHost != "broker.example.com" {
+		t.Errorf("MQTTHost = %q", cfg.MQTTHost)
+	}
+	if cfg.MQTTPort != 8883 {
+		t.Errorf("MQTTPort = %d, want 8883", cfg.MQTTPort)
+	}
+	if cfg.MQTTUser != "eebus" {
+		t.Errorf("MQTTUser = %q", cfg.MQTTUser)
+	}
+	if cfg.MQTTPassword != "secret" {
+		t.Errorf("MQTTPassword = %q", cfg.MQTTPassword)
+	}
+	if !cfg.MQTTTLS {
+		t.Error("MQTTTLS = false, want true")
+	}
+}
+
+// TestLoad_MQTTHostRequired: without a broker the bridge has nothing to
+// publish to — Load must refuse to build so s6 restarts with a clear error
+// instead of running a silently useless daemon.
+func TestLoad_MQTTHostRequired(t *testing.T) {
+	t.Setenv("EEBUS_MQTT_HOST", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded without EEBUS_MQTT_HOST, want error")
+	}
+}
+
+// TestBrokerURL: TLS flips the paho scheme from tcp:// to ssl:// (external
+// brokers on 8883 / cloud brokers). Without TLS nothing changes.
+func TestBrokerURL(t *testing.T) {
+	opts := MQTTOptions{Host: "broker.example.com", Port: 1883}
+	if got := brokerURL(opts); got != "tcp://broker.example.com:1883" {
+		t.Errorf("plain = %q", got)
+	}
+	opts.TLS = true
+	opts.Port = 8883
+	if got := brokerURL(opts); got != "ssl://broker.example.com:8883" {
+		t.Errorf("tls = %q", got)
+	}
+}
