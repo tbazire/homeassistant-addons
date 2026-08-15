@@ -49,6 +49,15 @@ Tested device / model: ____________________   Date: __________
       discovery message per measurement, retained.
 - [ ] One HA **device** appears per EEBUS gateway, with correct brand/model.
 - [ ] Each sensor has a stable `unique_id` (survives restart, no duplicates).
+- [ ] With no `mqtt.host` set, the broker is auto-discovered from the
+      Supervisor and the log shows `MQTT broker auto-discovered from Supervisor`.
+- [ ] External broker (issue #40): setting `mqtt.host`/`port`/`user`/
+      `password` connects to that broker instead (log shows `Using external
+      MQTT broker from configuration`); discovery + states arrive on it.
+- [ ] External broker over TLS: `mqtt.ssl: true` + port `8883` connects
+      successfully (system CA store).
+- [ ] Wrong `mqtt.host` credentials: the add-on retries for ~30s then fails
+      with a clear `broker unreachable` error (s6 restarts it).
 
 ## 6. State publishing
 

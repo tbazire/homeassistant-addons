@@ -63,9 +63,10 @@ add-on before starting this one (and vice-versa).
 ## Installation
 
 1. Add this repository to Home Assistant:
-   **Settings → Add-ons → Add-on Store → ⋯ → Repositories** →
+   **Settings → Apps → Install Apps** (or **Settings → Add-ons → Add-on Store**
+   on older versions) **→ ⋮ / ⋯ → Repositories** →
    `https://github.com/tbazire/homeassistant-addons`.
-2. Find **EEBUS Bridge (Dev)** in the store and click **Install**.
+2. Search for **eebus** and install **EEBUS Bridge (Dev)**.
 3. Configure the add-on (see below).
 4. Start it. The first start generates a SHIP certificate and persists it in
    `/data`; this certificate **must** survive restarts (keep backups enabled).
@@ -86,13 +87,37 @@ add-on before starting this one (and vice-versa).
 | `eebusd.port` | port | `4711` | Local TCP port for inbound SHIP connections. |
 | `mqtt.prefix` | string | `eebus` | MQTT prefix for state topics. |
 | `mqtt.discovery_prefix` | string | `homeassistant` | HA MQTT discovery prefix. |
+| `mqtt.host` | string | `""` | External MQTT broker host. Leave empty to auto-discover the broker from the Supervisor (Mosquitto add-on). |
+| `mqtt.port` | port | `1883` | External MQTT broker port (typically `8883` when `mqtt.ssl` is on). Only used when `mqtt.host` is set. |
+| `mqtt.user` | string | `""` | Username for the external broker. Leave empty if unauthenticated. |
+| `mqtt.password` | password | `""` | Password for the external broker. Only used when `mqtt.user` is set. |
+| `mqtt.ssl` | bool | `false` | Connect to the external broker over TLS (`ssl://`, system CA store). |
 | `write.enable` | bool | `false` | **Off by default.** When `true`, allows the add-on to send control commands to the device (e.g. schedule/pause a heat-pump compressor). See [Controlling devices](#controlling-devices-write-commands) below. |
 | `write.use_cases` | string | `"auto"` | `"auto"` activates every write use case the device supports, or a comma-separated list to restrict (e.g. `"ohpcf"`). |
 | `write.device_profile` | enum | `"auto"` | Restricts write discovery to a device family (`heatpump` / `evse` / `inverter` / `battery` / `generic`). `auto` trusts the device's own advertisement. |
 
-The MQTT broker is resolved automatically from the Home Assistant Supervisor
-(the Mosquitto add-on). You do not need to set a broker address unless you use
-an external broker.
+By default the MQTT broker is resolved automatically from the Home Assistant
+Supervisor (the Mosquitto add-on) — you do not need to configure anything.
+
+### External MQTT broker
+
+If you run your own MQTT broker outside Home Assistant (e.g. a dedicated
+Mosquitto host or a cloud broker), set `mqtt.host` and optionally the
+credentials. An explicit host always wins over Supervisor auto-discovery:
+
+```yaml
+mqtt:
+  host: 192.168.1.50
+  port: 1883
+  user: eebus
+  password: "your-secret"
+  ssl: false
+```
+
+For a broker that requires TLS (typically port `8883`, most cloud brokers),
+also set `ssl: true` — the connection then uses TLS with the system CA store.
+Note: the MQTT integration in Home Assistant must be configured to talk to the
+**same** broker, otherwise discovery messages will not reach your instance.
 
 ### First pairing
 
@@ -114,7 +139,7 @@ re-pair. Keep backups.
 - **No secrets in the image or repository.** All credentials are injected by
   Home Assistant at runtime.
 - **MQTT credentials** are resolved from the Supervisor (Mosquitto add-on) by
-  default; never logged.
+  default, or from the add-on config for an external broker; never logged.
 - **SHIP private key** is generated in the container at first start, stored in
   HA's private `/data`, mode `0600`, never logged.
 - **Minimal permissions**: the only non-default permission is

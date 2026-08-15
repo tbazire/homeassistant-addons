@@ -92,6 +92,7 @@ func (o *Orchestrator) connectMQTT(ctx context.Context) (*MQTTClient, error) {
 		Port:        o.cfg.MQTTPort,
 		User:        o.cfg.MQTTUser,
 		Password:    o.cfg.MQTTPassword,
+		TLS:         o.cfg.MQTTTLS,
 		ClientID:    "eebus-bridge",
 		WillTopic:   o.statusTopic(),
 		WillOnline:  `{"state":"online"}`,

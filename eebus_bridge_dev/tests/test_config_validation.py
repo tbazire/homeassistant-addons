@@ -125,14 +125,41 @@ def main() -> int:
         # Every key in options must have a matching key in schema.
         for key in options:
             check(key in schema, f"option '{key}' has a schema entry")
-        # Secret-bearing fields must use a password type in schema.
+        # Secret-bearing fields must use a password type in schema. The value
+        # is never interpolated into the message: taint analysis (and prudence)
+        # say do not echo anything read from a password-keyed field, even
+        # though here it is only the schema type string.
         for sensitive in ("pairing.secret",):
             section, leaf = sensitive.split(".", 1)
             sec_section = schema.get(section) or {}
             if isinstance(sec_section, dict) and leaf in sec_section:
                 leaf_type = sec_section[leaf]
                 check(isinstance(leaf_type, str) and "password" in leaf_type,
-                      f"'{sensitive}' schema is a password type (got {leaf_type!r})")
+                      f"'{sensitive}' schema is a password type")
+
+    # --- MQTT broker options (issue #40) --------------------------------------------
+    # run.sh reads mqtt.host/port/user/password/ssl from the add-on options to
+    # override Supervisor broker discovery. If these fields are missing from the
+    # schema, HA silently rejects them and the override branch is dead code —
+    # exactly the regression reported in issue #40.
+    print("MQTT broker options:")
+    mqtt_schema = (schema.get("mqtt") or {}) if isinstance(schema, dict) else {}
+    if isinstance(mqtt_schema, dict):
+        check(isinstance(mqtt_schema.get("host"), str) and "str" in mqtt_schema["host"],
+              "mqtt.host schema is a str type "
+              f"(got {mqtt_schema.get('host')!r})")
+        check(isinstance(mqtt_schema.get("port"), str) and "port" in mqtt_schema["port"],
+              "mqtt.port schema is a port type "
+              f"(got {mqtt_schema.get('port')!r})")
+        check(isinstance(mqtt_schema.get("user"), str) and "str" in mqtt_schema["user"],
+              "mqtt.user schema is a str type "
+              f"(got {mqtt_schema.get('user')!r})")
+        check(isinstance(mqtt_schema.get("password"), str)
+              and "password" in mqtt_schema["password"],
+              "mqtt.password schema is a password type")
+        check(mqtt_schema.get("ssl") == "bool",
+              "mqtt.ssl schema is bool "
+              f"(got {mqtt_schema.get('ssl')!r})")
 
     # --- License file ---------------------------------------------------------------
     print("License:")

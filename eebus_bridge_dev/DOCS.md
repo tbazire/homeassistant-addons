@@ -72,13 +72,30 @@ State       <mqtt.prefix>/<ski>/<entity>/<id>/state
 `unique_id` is stable and derived from `ski + entity + measurement_id`, so a
 device reconnect does not create duplicate sensors.
 
+### Broker resolution
+
+`run.sh` resolves the broker with the following priority:
+
+1. **User override** — `mqtt.host` set in the add-on options (external
+   broker). `mqtt.port` (default `1883`), `mqtt.user`, `mqtt.password` and
+   `mqtt.ssl` are honored only in this mode. With `mqtt.ssl: true` the bridge
+   connects over TLS (`ssl://`) using the system CA store — for brokers on
+   port `8883` or cloud brokers.
+2. **Supervisor service** — the Mosquitto add-on auto-discovered via
+   `bashio::services` (default; nothing to configure).
+3. **Neither** — the add-on fails fast at startup with a clear error.
+
+The MQTT integration in Home Assistant must be configured to talk to the same
+broker, otherwise discovery messages will not reach the instance.
+
 ## Lifecycle
 
 ### Start
 1. HA Supervisor starts the container.
 2. s6-overlay runs `run.sh`.
 3. `run.sh` reads options via `bashio`, resolves the MQTT broker
-   (Supervisor service or user override), exports `EEBUS_*` env vars.
+   (user override `mqtt.host` first, Supervisor service fallback),
+   exports `EEBUS_*` env vars.
 4. `run.sh` execs `eebus-bridge`.
 5. `eebus-bridge` connects to MQTT, then spawns `eebusd` as a subprocess.
 6. `eebusd` loads (or generates) its certificate, announces on mDNS, and
@@ -113,6 +130,7 @@ device reconnect does not create duplicate sensors.
 | Nothing happens at startup | Add-on logs (stderr of `eebusd`). Set `log_level: trace`. |
 | Pairing stuck | `pairing state [...]` log lines. The device's own UI may also show the handshake. |
 | Measurements not updating | Set `poll_interval: 30`; check the device is online; check MQTT messages with `mosquitto_sub -t 'eebus/#' -v`. |
+| External broker unreachable | Check `mqtt.host`/`port`/credentials in the add-on config; for TLS brokers set `mqtt.ssl: true` (and usually port `8883`). The add-on log shows which broker was resolved at startup. |
 | HA sensors missing | Confirm discovery messages: `mosquitto_sub -t 'homeassistant/sensor/eebus_bridge/#' -v`. |
 | Wrong device name in HA | The `manufacturer` kind provides brand/model. If missing, the device exposes no DeviceClassification server feature. |
 | Write command has no effect | `write.enable` must be `true` and the per-use-case toggle (`write.lpc_enabled` / `write.ohpcf_enabled`) too. Confirm the entity appears as a button/number in HA and check the bridge log for `command result status=error`. The device may simply not support the requested action (e.g. a compressor that is not pausable). |

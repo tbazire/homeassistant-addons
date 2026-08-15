@@ -51,10 +51,31 @@ configuration:
     description: Local TCP port for inbound SHIP connections. Default 4711.
   mqtt:
     name: MQTT
-    description: MQTT topics used to publish sensors. Broker is auto-discovered from Home Assistant.
+    description: >-
+      MQTT topics and broker. Leave host empty to auto-discover the broker from
+      Home Assistant (Mosquitto add-on). Set a host to use an external broker.
   mqtt.prefix:
     name: State topic prefix
     description: MQTT prefix for state topics (e.g. "eebus").
   mqtt.discovery_prefix:
     name: Discovery prefix
     description: Home Assistant MQTT discovery prefix. Usually "homeassistant".
+  mqtt.host:
+    name: Broker host
+    description: >-
+      External MQTT broker hostname or IP. Leave empty to use the broker
+      auto-discovered from Home Assistant.
+  mqtt.port:
+    name: Broker port
+    description: External MQTT broker port. Default 1883 (8883 when SSL is enabled).
+  mqtt.user:
+    name: Broker username
+    description: Username for the external MQTT broker. Leave empty if unauthenticated.
+  mqtt.password:
+    name: Broker password
+    description: Password for the external MQTT broker. Stored securely by Home Assistant.
+  mqtt.ssl:
+    name: Use TLS (SSL)
+    description: >-
+      Connect to the external broker over TLS (typically port 8883). Uses the
+      system CA store.

@@ -32,7 +32,7 @@
 #   https://developers.home-assistant.io/docs/add-ons/configuration
 
 name: EEBUS Bridge (Dev)
-version: "0.7.1-dev"
+version: "0.8.0-dev"
 slug: eebus_bridge_dev
 description: >-
   DEVELOPMENT channel of the EEBUS Bridge. Same code as the production
@@ -73,6 +73,11 @@ options:
   mqtt:
     prefix: "eebus"
     discovery_prefix: "homeassistant"
+    host: ""
+    port: 1883
+    user: ""
+    password: ""
+    ssl: false
   write:
     enable: false
     use_cases: "auto"
@@ -96,6 +101,11 @@ schema:
   mqtt:
     prefix: match(^[A-Za-z0-9_\-/]+$)
     discovery_prefix: str
+    host: str?
+    port: port?
+    user: str?
+    password: password?
+    ssl: bool
   write:
     enable: bool
     use_cases: match(^(auto|[a-z]+(,[a-z]+)*)$)
