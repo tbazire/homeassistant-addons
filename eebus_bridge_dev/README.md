@@ -62,13 +62,16 @@ add-on before starting this one (and vice-versa).
 
 ## Installation
 
-1. Add this repository to Home Assistant:
-   **Settings → Apps → Install Apps** (or **Settings → Add-ons → Add-on Store**
-   on older versions) **→ ⋮ / ⋯ → Repositories** →
-   `https://github.com/tbazire/homeassistant-addons`.
-2. Search for **eebus** and install **EEBUS Bridge (Dev)**.
-3. Configure the add-on (see below).
-4. Start it. The first start generates a SHIP certificate and persists it in
+[![Open your Home Assistant instance and show the add add-on repository dialog with a specific repository URL pre-filled.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Ftbazire%2Fhomeassistant-addons)
+
+In Home Assistant, go to **Supervisor → Add-on Store → ⋯ → Repositories** and
+add this repo: `https://github.com/tbazire/homeassistant-addons`.
+
+The add-ons from this repository now appear in the store. Search for **eebus**
+and install **EEBUS Bridge (Dev)**. Then:
+
+1. Configure the add-on (see below).
+2. Start it. The first start generates a SHIP certificate and persists it in
    `/data`; this certificate **must** survive restarts (keep backups enabled).
 
 ## Configuration
