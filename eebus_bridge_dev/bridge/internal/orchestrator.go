@@ -328,6 +328,9 @@ func (o *Orchestrator) publishDiscovery(mqtt *MQTTClient, disc Discovery) {
 // publishState emits a sensor state value.
 func (o *Orchestrator) publishState(mqtt *MQTTClient, topic, value string) {
 	if topic == "" || value == "" {
+		// Routine for components without state (buttons), but logged at debug
+		// so "entity never updates" can be told apart from "never published".
+		o.logger.Debug("state publish skipped", "topic", topic, "value", value)
 		return
 	}
 	if err := mqtt.Publish(topic, false, []byte(value)); err != nil {

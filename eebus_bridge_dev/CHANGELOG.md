@@ -23,6 +23,19 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.9.0-dev] - 2026-08-21
+
+### Added
+
+- **MQTT traffic logging.** With `log_level` set to `debug` (or `trace`), the
+  bridge now logs every message it exchanges with the broker: outgoing
+  publishes (`mqtt publish`, with topic, payload and retain flag), incoming
+  command messages (`mqtt recv`) and topic subscriptions (`mqtt subscribe`).
+  State updates the mapper deliberately skips (empty topic or value) are
+  traced too (`state publish skipped`). This makes "entities don't update on
+  my external broker" diagnosable from the add-on log alone, without direct
+  access to the broker (`mosquitto_sub`).
+
 ## [0.8.0-dev] - 2026-08-15
 
 Adds support for an external MQTT broker, resolving

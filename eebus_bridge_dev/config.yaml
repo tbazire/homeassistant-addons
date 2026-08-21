@@ -32,7 +32,7 @@
 #   https://developers.home-assistant.io/docs/add-ons/configuration
 
 name: EEBUS Bridge (Dev)
-version: "0.8.0-dev"
+version: "0.9.0-dev"
 slug: eebus_bridge_dev
 description: >-
   DEVELOPMENT channel of the EEBUS Bridge. Same code as the production

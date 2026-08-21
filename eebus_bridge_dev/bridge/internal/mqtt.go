@@ -7,6 +7,10 @@
 // LWT) and expose a tiny Publish/Subscribe API. No EEBUS or HA knowledge here
 // — those concerns live in discovery.go and the orchestrator.
 //
+// Every outgoing publish, subscription and incoming message is logged at debug
+// level, so setting log_level to debug or trace makes the exact broker traffic
+// visible in the add-on log (essential when debugging an external broker).
+//
 // Uses paho.mqtt.golang (pure Go, CGO-free).
 
 package internal
@@ -95,6 +99,7 @@ func NewMQTTClient(opts MQTTOptions, logger Logger) *MQTTClient {
 			logger.Info("mqtt connected", "broker", broker)
 			// Re-publish LWT "online" so any retained "offline" is cleared.
 			if opts.WillTopic != "" && opts.WillOnline != "" {
+				logger.Debug("mqtt publish", "topic", opts.WillTopic, "payload", opts.WillOnline, "retain", true)
 				c.Publish(opts.WillTopic, 1, true, opts.WillOnline)
 			}
 			// Re-apply every active subscription. paho does NOT remember
@@ -137,7 +142,8 @@ func (c *MQTTClient) resubscribeAll() {
 		if h == nil {
 			continue
 		}
-		if tkn := c.client.Subscribe(topic, 1, adaptHandler(h)); tkn.WaitTimeout(5 * time.Second) {
+		c.logger.Debug("mqtt subscribe", "topic", topic)
+		if tkn := c.client.Subscribe(topic, 1, c.adaptHandler(h)); tkn.WaitTimeout(5 * time.Second) {
 			if err := tkn.Error(); err != nil {
 				c.logger.Warn("mqtt re-subscribe failed", "topic", topic, "err", err.Error())
 			}
@@ -147,8 +153,11 @@ func (c *MQTTClient) resubscribeAll() {
 
 // adaptHandler converts a bridge-internal MessageHandler into the paho
 // MessageHandler signature, wrapping the paho message behind MQTTMessage.
-func adaptHandler(h MessageHandler) pahomqtt.MessageHandler {
+// Inbound messages are logged at debug level before dispatch so the command
+// flow (e.g. HA button presses) is visible when troubleshooting a broker.
+func (c *MQTTClient) adaptHandler(h MessageHandler) pahomqtt.MessageHandler {
 	return func(_ pahomqtt.Client, m pahomqtt.Message) {
+		c.logger.Debug("mqtt recv", "topic", m.Topic(), "payload", string(m.Payload()))
 		h(pahoMessage{m})
 	}
 }
@@ -181,8 +190,11 @@ func (c *MQTTClient) Connect(ctx context.Context) error {
 }
 
 // Publish sends a message. qos=1, retain follows the argument. Returns an
-// error if the publish did not complete within 10s.
+// error if the publish did not complete within 10s. The message is logged at
+// debug level before the attempt, so log_level=debug|trace shows the exact
+// traffic sent to the broker (topic, payload, retain flag).
 func (c *MQTTClient) Publish(topic string, retained bool, payload []byte) error {
+	c.logger.Debug("mqtt publish", "topic", topic, "payload", string(payload), "retain", retained)
 	token := c.client.Publish(topic, 1, retained, payload)
 	if !token.WaitTimeout(10 * time.Second) {
 		return fmt.Errorf("mqtt publish timeout: %s", topic)
@@ -194,10 +206,11 @@ func (c *MQTTClient) Publish(topic string, retained bool, payload []byte) error 
 // is automatically re-applied on reconnect (paho does not remember subs across
 // reconnects when auto-reconnect is enabled).
 func (c *MQTTClient) Subscribe(topic string, handler MessageHandler) error {
+	c.logger.Debug("mqtt subscribe", "topic", topic)
 	c.mu.Lock()
 	c.subs[topic] = handler
 	c.mu.Unlock()
-	token := c.client.Subscribe(topic, 1, adaptHandler(handler))
+	token := c.client.Subscribe(topic, 1, c.adaptHandler(handler))
 	if !token.WaitTimeout(10 * time.Second) {
 		return fmt.Errorf("mqtt subscribe timeout: %s", topic)
 	}
@@ -210,7 +223,9 @@ func (c *MQTTClient) Disconnect(willTopic, onlinePayload string) {
 	if willTopic != "" && onlinePayload != "" && c.client.IsConnected() {
 		// Publish offline before disconnecting. The paho LWT only fires on
 		// ungraceful loss, so we must clear our own online marker ourselves.
-		c.client.Publish(willTopic, 1, true, strings.Replace(onlinePayload, "online", "offline", 1))
+		offline := strings.Replace(onlinePayload, "online", "offline", 1)
+		c.logger.Debug("mqtt publish", "topic", willTopic, "payload", offline, "retain", true)
+		c.client.Publish(willTopic, 1, true, offline)
 	}
 	c.client.Disconnect(250) // 250ms grace
 }

@@ -129,7 +129,8 @@ broker, otherwise discovery messages will not reach the instance.
 |---------|---------------|
 | Nothing happens at startup | Add-on logs (stderr of `eebusd`). Set `log_level: trace`. |
 | Pairing stuck | `pairing state [...]` log lines. The device's own UI may also show the handshake. |
-| Measurements not updating | Set `poll_interval: 30`; check the device is online; check MQTT messages with `mosquitto_sub -t 'eebus/#' -v`. |
+| Measurements not updating | Set `poll_interval: 30`; check the device is online; check MQTT messages with `mosquitto_sub -t 'eebus/#' -v`, or set `log_level: debug` to see every published message in the add-on log. |
+| MQTT traffic in detail | Set `log_level: debug` (or `trace`): every outgoing publish (`mqtt publish`), subscription (`mqtt subscribe`) and incoming message (`mqtt recv`) is logged with topic and payload — no direct access to the broker needed. `state publish skipped` lines mark values the mapper deliberately did not publish (e.g. button components, which have no state). |
 | External broker unreachable | Check `mqtt.host`/`port`/credentials in the add-on config; for TLS brokers set `mqtt.ssl: true` (and usually port `8883`). The add-on log shows which broker was resolved at startup. |
 | HA sensors missing | Confirm discovery messages: `mosquitto_sub -t 'homeassistant/sensor/eebus_bridge/#' -v`. |
 | Wrong device name in HA | The `manufacturer` kind provides brand/model. If missing, the device exposes no DeviceClassification server feature. |

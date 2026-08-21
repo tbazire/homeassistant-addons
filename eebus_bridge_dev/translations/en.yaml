@@ -8,7 +8,9 @@
 configuration:
   log_level:
     name: Log level
-    description: Verbosity of the add-on logs. Use "debug" only when investigating issues.
+    description: >-
+      Verbosity of the add-on logs. Use "debug" or "trace" when investigating
+      issues — this also logs every MQTT message exchanged with the broker.
   poll_interval:
     name: Poll interval (seconds)
     description: >-
