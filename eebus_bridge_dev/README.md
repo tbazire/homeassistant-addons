@@ -216,6 +216,7 @@ pipeline, the configuration knobs, and per-use-case details.
 | No sensors in HA | MQTT broker not available | Install the Mosquitto add-on, or set a broker in the add-on config. |
 | MQTT client disconnected | Prod add-on is also running | Stop the production EEBUS Bridge add-on (mutually exclusive — see above). |
 | Measurements stuck | Device is pull-only and `poll_interval = 0` | Set `poll_interval` to e.g. `60`. |
+| Entities don't update (external broker) | Bridge and HA watch different brokers, or discovery prefix mismatch | Set `log_level: debug`: `mqtt publish` lines show every message sent. If they appear without errors, HA's MQTT integration must point at the same broker (and `discovery_prefix` must match). |
 
 For deeper diagnostics see [`DOCS.md`](./DOCS.md).
 

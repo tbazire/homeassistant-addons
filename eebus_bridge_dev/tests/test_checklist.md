@@ -62,6 +62,12 @@ Tested device / model: ____________________   Date: __________
 ## 6. State publishing
 
 - [ ] `mosquitto_sub -t 'eebus/#' -v` shows state updates.
+- [ ] With `log_level: debug`, the add-on log shows a `mqtt publish` line
+      (topic + payload) for every state and discovery message sent, matching
+      what `mosquitto_sub` receives.
+- [ ] With `log_level: debug`, pressing an OHPCF button shows a `mqtt recv`
+      line for the command topic, and `state publish skipped` lines appear
+      only for components without state (buttons).
 - [ ] Setting `poll_interval = 0` stops proactive pulls but pushed values still
       arrive (if the device pushes).
 - [ ] Setting `poll_interval = 30` resumes periodic updates within ~30s.
