@@ -16,6 +16,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -62,12 +64,12 @@ func (o *Orchestrator) Run() error {
 	eebusd := NewSubprocess(o.cfg.ScannerBin, o.cfg.Args(), o.logger)
 
 	// onStdout is invoked once per (re)start of eebusd. Each call sets up a
-	// fresh parser and feeds events into the mapper/publisher.
+	// fresh parser and feeds events into the mapper/publisher/command-router.
 	onStdout := func(r io.Reader) {
 		parser := NewParser(r, o.logger)
 		go func() {
 			err := parser.Stream(func(ev Event) {
-				o.handleEvent(ev, mapper, mqtt)
+				o.handleEvent(ev, mapper, mqtt, eebusd)
 			})
 			if err != nil {
 				o.logger.Warn("ndjson parser ended", "err", err.Error())
@@ -90,6 +92,7 @@ func (o *Orchestrator) connectMQTT(ctx context.Context) (*MQTTClient, error) {
 		Port:        o.cfg.MQTTPort,
 		User:        o.cfg.MQTTUser,
 		Password:    o.cfg.MQTTPassword,
+		TLS:         o.cfg.MQTTTLS,
 		ClientID:    "eebus-bridge",
 		WillTopic:   o.statusTopic(),
 		WillOnline:  `{"state":"online"}`,
@@ -112,8 +115,9 @@ func (o *Orchestrator) connectMQTT(ctx context.Context) (*MQTTClient, error) {
 	}
 }
 
-// handleEvent routes one parsed NDJSON event to discovery publishing.
-func (o *Orchestrator) handleEvent(ev Event, mapper *Mapper, mqtt *MQTTClient) {
+// handleEvent routes one parsed NDJSON event to discovery publishing and, for
+// write-channel events, to MQTT subscription / command routing.
+func (o *Orchestrator) handleEvent(ev Event, mapper *Mapper, mqtt *MQTTClient, eebusd *Subprocess) {
 	switch {
 	case ev.Manufacturer != nil:
 		// Update device registry. No MQTT publish here — the device block is
@@ -128,9 +132,62 @@ func (o *Orchestrator) handleEvent(ev Event, mapper *Mapper, mqtt *MQTTClient) {
 		}
 		o.publishState(mqtt, disc.StateTopic, disc.StateValue)
 
+	case ev.Controllable != nil:
+		// A remote entity just announced support for a write use case (OHPCF,
+		// LPC, …), or — on a subsequent line — refreshed the controllable's
+		// state. OnControllable returns one descriptor per HA entity to
+		// publish: a single one for a number (LPC), or one per button for the
+		// OHPCF buttons component. The first publish of each also subscribes
+		// to its command topics; refreshes (state-only descriptors) just
+		// republish state.
+		c := ev.Controllable
+		for _, disc := range mapper.OnControllable(c) {
+			if disc.Config != nil {
+				o.publishDiscovery(mqtt, disc)
+				// Subscribe to command topics. Use a closure capturing the
+				// controllable context so the inbound handler can build a
+				// Command and route it to eebusd's stdin.
+				for _, topic := range disc.CommandTopics {
+					cmdTopic := topic
+					o.subscribeCommand(mqtt, cmdTopic, c, eebusd)
+				}
+			}
+			// Refresh state (and action, when present). On first announce this
+			// seeds HA so it does not show "unknown"; on refreshes this
+			// propagates device-driven transitions. publishState is a no-op
+			// when the topic or value is empty, so components with no state
+			// (buttons) are handled uniformly here.
+			o.publishState(mqtt, disc.StateTopic, disc.StateValue)
+			if disc.ActionTopic != "" {
+				o.publishState(mqtt, disc.ActionTopic, disc.ActionValue)
+			}
+		}
+
+	case ev.UcSignal != nil:
+		// A use case read signal (e.g. OHPCF requested power estimate) arrived.
+		// Map it to a typed sensor: publish discovery the first time, then only
+		// refresh the state on subsequent lines. Read-only: no command topic,
+		// so no eebusd write is ever triggered by these entities.
+		disc := mapper.OnUcSignal(ev.UcSignal)
+		if disc.Config != nil {
+			o.publishDiscovery(mqtt, disc)
+		}
+		o.publishState(mqtt, disc.StateTopic, disc.StateValue)
+
+	case ev.CommandResult != nil:
+		// Outcome of a previously-dispatched command. Surface on the bridge
+		// status topic and log it; HA already reflects the new state via the
+		// next controllable/state line eebusd emits.
+		o.logger.Debug("command result", "op", ev.CommandResult.Op,
+			"status", ev.CommandResult.Status, "err", ev.CommandResult.Error)
+		statusTopic := fmt.Sprintf("%s/bridge/command_result", o.cfg.MQTTPrefix)
+		payload := fmt.Sprintf(`{"op":%q,"status":%q}`, ev.CommandResult.Op, ev.CommandResult.Status)
+		_ = mqtt.Publish(statusTopic, false, []byte(payload))
+
 	case ev.Configuration != nil:
-		// Configuration + diagnosis exposure will be expanded in the write
-		// jalot. For now, log at debug so the operator can see the flow.
+		// Configuration exposure (setpoints, nameplate values) is still
+		// read-only here. Write-side configuration will arrive with the LPC
+		// lot. Log at debug so the operator can see the flow.
 		o.logger.Debug("configuration event", "ski", ev.Configuration.SKI,
 			"key", ev.Configuration.KeyName, "value", ev.Configuration.Value)
 
@@ -142,6 +199,118 @@ func (o *Orchestrator) handleEvent(ev Event, mapper *Mapper, mqtt *MQTTClient) {
 		o.logger.Debug("diagnosis event", "ski", ev.Diagnosis.SKI,
 			"state", ev.Diagnosis.OperatingState)
 	}
+}
+
+// subscribeCommand registers an MQTT handler on cmdTopic that translates the
+// inbound HA payload into an NDJSON Command line and forwards it to eebusd's
+// stdin via WriteStdin. The controllable context (c) carries the SKI/entity/
+// use case needed to build the op.
+//
+// The topic suffix decides which action is requested: a "mode/cmd" topic
+// carrying "off" maps to <uc>.abort, "auto" to <uc>.schedule; a "preset/cmd"
+// topic carrying "pause"/"resume" maps to <uc>.pause/<uc>.resume.
+func (o *Orchestrator) subscribeCommand(mqtt *MQTTClient, cmdTopic string, c *Controllable, eebusd *Subprocess) {
+	handler := func(payload string) {
+		op, value, unit, ok := decodeHACommand(cmdTopic, payload, c)
+		if !ok {
+			o.logger.Warn("unhandled HA command", "topic", cmdTopic, "payload", payload)
+			return
+		}
+		cmd := Command{
+			Kind:   KindCommand,
+			Op:     op,
+			SKI:    c.SKI,
+			Entity: c.Entity,
+			Value:  value,
+			Unit:   unit,
+		}
+		line, err := json.Marshal(cmd)
+		if err != nil {
+			o.logger.Warn("encode command", "err", err.Error())
+			return
+		}
+		if err := eebusd.WriteStdin(string(line)); err != nil {
+			o.logger.Warn("write command to eebusd", "err", err.Error())
+		}
+	}
+	// paho delivers a pahomqtt.Message; wrap to extract the payload string.
+	if err := mqtt.Subscribe(cmdTopic, func(msg MQTTMessage) {
+		handler(string(msg.Payload()))
+	}); err != nil {
+		o.logger.Warn("subscribe command topic", "topic", cmdTopic, "err", err.Error())
+	}
+}
+
+// decodeHACommand maps an HA command_topic payload into a (op, value, unit)
+// triple for the NDJSON Command wire format. Returns ok=false for payloads we
+// do not know how to translate (the orchestrator logs and drops them).
+//
+// Routing is based on the topic path:
+//   - .../btn/<action>/cmd → <uc>.<action> (button entities; payload ignored —
+//     a button is a momentary trigger. The action is carried by the topic, not
+//     the payload, so each button maps to exactly one op.)
+//   - .../value/cmd        → <uc>.set / <uc>.clear (number entities; payload is
+//     the numeric value, empty clears)
+//
+// The same decoder works for any use case regardless of component.
+func decodeHACommand(topic, payload string, c *Controllable) (op string, value float64, unit string, ok bool) {
+	switch {
+	case isButtonCmdTopic(topic):
+		// Button: extract the action from the /btn/<action>/cmd segment. The
+		// payload (HA sends "PRESS") is irrelevant — pressing the button is the
+		// intent, and the topic already names the action.
+		action := buttonActionFromTopic(topic)
+		if action == "" {
+			return "", 0, "", false
+		}
+		// schedule is the only OHPCF action that takes an argument (a start
+		// delay in seconds); pressing the button means "start now".
+		if action == "schedule" {
+			return c.UseCase + ".schedule", 0, "seconds", true
+		}
+		return c.UseCase + "." + action, 0, "", true
+
+	case strings.HasSuffix(topic, "/value/cmd"):
+		// Number entities carry a numeric payload (e.g. a watts limit). Parse
+		// the trimmed payload. An empty payload clears the limit.
+		raw := strings.TrimSpace(payload)
+		if raw == "" {
+			return c.UseCase + ".clear", 0, c.Unit, true
+		}
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return "", 0, "", false
+		}
+		return c.UseCase + ".set", v, c.Unit, true
+	}
+	return "", 0, "", false
+}
+
+// isButtonCmdTopic reports whether topic matches the button command pattern
+// .../btn/<action>/cmd. It matches on the "/btn/" segment + "/cmd" suffix so
+// it is robust to the prefix and SKI length.
+func isButtonCmdTopic(topic string) bool {
+	return strings.Contains(topic, "/btn/") && strings.HasSuffix(topic, "/cmd")
+}
+
+// buttonActionFromTopic extracts the <action> segment from a
+// .../btn/<action>/cmd topic. Returns "" if the segment is absent (malformed
+// topic). The action is the path element immediately following the last
+// "/btn/" and preceding "/cmd".
+func buttonActionFromTopic(topic string) string {
+	idx := strings.LastIndex(topic, "/btn/")
+	if idx < 0 {
+		return ""
+	}
+	rest := topic[idx+len("/btn/"):]
+	// Strip the trailing "/cmd".
+	rest = strings.TrimSuffix(rest, "/cmd")
+	// The action is the first path segment (no further slashes expected, but
+	// trim anything after one just in case).
+	if i := strings.Index(rest, "/"); i >= 0 {
+		rest = rest[:i]
+	}
+	return rest
 }
 
 // publishDiscovery emits the HA discovery config message (retained).
@@ -159,6 +328,9 @@ func (o *Orchestrator) publishDiscovery(mqtt *MQTTClient, disc Discovery) {
 // publishState emits a sensor state value.
 func (o *Orchestrator) publishState(mqtt *MQTTClient, topic, value string) {
 	if topic == "" || value == "" {
+		// Routine for components without state (buttons), but logged at debug
+		// so "entity never updates" can be told apart from "never published".
+		o.logger.Debug("state publish skipped", "topic", topic, "value", value)
 		return
 	}
 	if err := mqtt.Publish(topic, false, []byte(value)); err != nil {

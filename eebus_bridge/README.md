@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 Tommy Bazire -->
 
-# EEBUS Bridge [EXPERIMENTALE]
+# EEBUS Bridge
 
-[![Version](https://img.shields.io/badge/version-0.1.0-41BDF5.svg)](./config.yaml)
+[![Version](https://img.shields.io/badge/version-0.3.0-41BDF5.svg)](./config.yaml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](../LICENSE)
 
 A generic EEBUS bridge for Home Assistant. It pairs with **any** EEBUS-capable
@@ -13,13 +13,29 @@ managers — and exposes its measurements as native Home Assistant sensors via
 
 > Works with: Saunier Duval/Vaillant VR920, and any device implementing the EEBUS SHIP/SPINE standard.
 
+## ⚠️ Mutually exclusive with the dev channel add-on
+
+The production add-on and the [development channel](../eebus_bridge_dev)
+share the same internal identifiers by design:
+
+- the **SHIP TCP port** `4711`,
+- the **MQTT ClientID** `eebus-bridge`,
+- the **HA discovery topic** namespace `homeassistant/sensor/eebus_bridge/#`,
+- the default **MQTT state prefix** `eebus`.
+
+If both add-ons run at the same time against the same broker and the same
+EEBUS device, they will fight for the SHIP connection, kick each other off
+the MQTT broker (duplicate ClientID), and overwrite each other's discovery
+messages. **Only one of them can be active at a time.** Stop the dev add-on
+before starting this one (and vice-versa).
+
 ## How it works
 
 ```
-┌───────────────┐   SHIP/SPINE    ┌──────────────┐   MQTT    ┌──────────────┐
-│ EEBUS device  │ ◄─────────────► │ eebus_bridge │ ────────► │ Home Assistant
-│ (heat pump…)  │   mDNS + TLS    │  (add-on)    │  discovery│  (sensors)   │
-└───────────────┘                 └──────────────┘           └──────────────┘
+┌───────────────┐   SHIP/SPINE    ┌──────────────────┐   MQTT    ┌──────────────┐
+│ EEBUS device  │ ◄─────────────► │   eebus_bridge   │ ────────► │ Home Assistant
+│ (heat pump…)  │   mDNS + TLS    │     (add-on)     │  discovery│  (sensors)   │
+└───────────────┘                 └──────────────────┘           └──────────────┘
 ```
 
 1. `eebusd` announces itself as a CEM (Customer Energy Management System) on
@@ -37,6 +53,8 @@ managers — and exposes its measurements as native Home Assistant sensors via
 - An EEBUS-capable device on the **same LAN** as Home Assistant.
 - The device must allow pairing with a new CEM (some devices limit the number
   of simultaneous pairings — consult its manual).
+- The **dev** channel add-on must be **stopped** if you have it installed
+  (see above).
 
 ## Installation
 
@@ -45,8 +63,8 @@ managers — and exposes its measurements as native Home Assistant sensors via
 In Home Assistant, go to **Supervisor → Add-on Store → ⋯ → Repositories** and
 add this repo: `https://github.com/tbazire/homeassistant-addons`.
 
-The add-ons from this repository now appear in the store. Click **EEBUS
-Bridge** → **Install**. Then:
+The add-ons from this repository now appear in the store. Search for **eebus**
+and install **EEBUS Bridge**. Then:
 
 1. Configure the add-on (see below).
 2. Start it. The first start generates a SHIP certificate and persists it in
@@ -56,22 +74,49 @@ Bridge** → **Install**. Then:
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `log_level` | enum | `info` | Log verbosity: `trace`, `debug`, `info`, `warning`, `error`. |
-| `poll_interval` | int (seconds) | `60` | How often `eebusd` proactively re-reads each entity. `0` = subscription-only. |
+| `log_level` | enum | `warning` | Log verbosity: `trace`, `debug`, `info`, `warning`, `error`. `debug`/`trace` also log every MQTT message exchanged with the broker. |
+| `poll_interval` | int (seconds) | `30` | How often `eebusd` proactively re-reads each entity. `0` = subscription-only. |
 | `pairing.auto_accept` | bool | `false` | Auto-trust any incoming pairing request. Insecure — enable only on a trusted network during first pairing. |
 | `pairing.remote_ski` | hex (40 chars) | `""` | SKI of a specific device to pair with. Leave empty to rely on auto-discovery. |
 | `pairing.secret` | password | `""` | Optional SHIP pairing secret (hex), enables listener pairing mode. |
-| `eebusd.brand` | string | `EEBusBridge` | mDNS brand name announced by the add-on. |
-| `eebusd.model` | string | `Bridge-1` | mDNS model name. |
+| `eebusd.brand` | string | `HomeAssistant` | mDNS brand name announced by the add-on. |
+| `eebusd.model` | string | `BridgeHA` | mDNS model name. |
 | `eebusd.serial` | string | `bridge-0001` | Serial number. **Must be unique on the network.** |
 | `eebusd.vendor` | string | `EBRG` | EEBUS vendor code (3+ characters). |
 | `eebusd.port` | port | `4711` | Local TCP port for inbound SHIP connections. |
 | `mqtt.prefix` | string | `eebus` | MQTT prefix for state topics. |
 | `mqtt.discovery_prefix` | string | `homeassistant` | HA MQTT discovery prefix. |
+| `mqtt.host` | string | `""` | External MQTT broker host. Leave empty to auto-discover the broker from the Supervisor (Mosquitto add-on). |
+| `mqtt.port` | port | `1883` | External MQTT broker port (typically `8883` when `mqtt.ssl` is on). Only used when `mqtt.host` is set. |
+| `mqtt.user` | string | `""` | Username for the external broker. Leave empty if unauthenticated. |
+| `mqtt.password` | password | `""` | Password for the external broker. Only used when `mqtt.user` is set. |
+| `mqtt.ssl` | bool | `false` | Connect to the external broker over TLS (`ssl://`, system CA store). |
+| `write.enable` | bool | `false` | **Off by default.** When `true`, allows the add-on to send control commands to the device (e.g. schedule/pause a heat-pump compressor). See [Controlling devices](#controlling-devices-write-commands) below. |
+| `write.use_cases` | string | `"auto"` | `"auto"` activates every write use case the device supports, or a comma-separated list to restrict (e.g. `"ohpcf"`). |
+| `write.device_profile` | enum | `"auto"` | Restricts write discovery to a device family (`heatpump` / `evse` / `inverter` / `battery` / `generic`). `auto` trusts the device's own advertisement. |
 
-The MQTT broker is resolved automatically from the Home Assistant Supervisor
-(the Mosquitto add-on). You do not need to set a broker address unless you use
-an external broker.
+By default the MQTT broker is resolved automatically from the Home Assistant
+Supervisor (the Mosquitto add-on) — you do not need to configure anything.
+
+### External MQTT broker
+
+If you run your own MQTT broker outside Home Assistant (e.g. a dedicated
+Mosquitto host or a cloud broker), set `mqtt.host` and optionally the
+credentials. An explicit host always wins over Supervisor auto-discovery:
+
+```yaml
+mqtt:
+  host: 192.168.1.50
+  port: 1883
+  user: eebus
+  password: "your-secret"
+  ssl: false
+```
+
+For a broker that requires TLS (typically port `8883`, most cloud brokers),
+also set `ssl: true` — the connection then uses TLS with the system CA store.
+Note: the MQTT integration in Home Assistant must be configured to talk to the
+**same** broker, otherwise discovery messages will not reach your instance.
 
 ### First pairing
 
@@ -93,18 +138,69 @@ re-pair. Keep backups.
 - **No secrets in the image or repository.** All credentials are injected by
   Home Assistant at runtime.
 - **MQTT credentials** are resolved from the Supervisor (Mosquitto add-on) by
-  default; never logged.
+  default, or from the add-on config for an external broker; never logged.
 - **SHIP private key** is generated in the container at first start, stored in
   HA's private `/data`, mode `0600`, never logged.
-- **Container runs as non-root.**
 - **Minimal permissions**: the only non-default permission is
   `host_network: true`, which is required by the EEBUS protocol (mDNS multicast
   + inbound SHIP TCP). See [`../SECURITY.md`](../SECURITY.md) for the full
   threat model.
+- **Non-root daemon**: s6-overlay's `/init` starts as root (it must, to read
+  `/data/options.json` which HA writes `0600 root:root`), but the service
+  script drops to a dedicated unprivileged user `eebus` (uid `911`) via
+  `s6-setuidgid` *before* exec-ing `eebus-bridge`. The daemon and its `eebusd`
+  child never run as root.
+- **Custom AppArmor profile**: the add-on ships its own `apparmor.txt` (not HA's
+  default). It is a tailored, single-profile policy granting only the s6-overlay
+  supervision paths, the TLS CA bundle, TCP/UDP networking, `/data`, and the
+  privilege-drop capabilities (`chown`/`setuid`/`setgid`) needed for the
+  non-root startup phase. Deliberately no `net_bind_service` (SHIP port 4711 is
+  >1024), no `net_raw`, no `sys_admin`. See [`apparmor.txt`](./apparmor.txt).
 - **Container images are signed with Cosign** — verify with:
   ```
-  cosign verify ghcr.io/tbazire/eebus-bridge:0.1.0
+  cosign verify ghcr.io/tbazire/eebus-bridge:0.3.0
   ```
+
+## Controlling devices (write commands)
+
+By default this add-on is **read-only** (sensors only). Setting
+`write.enable: true` opens an opt-in control channel so Home Assistant can
+also **act** on the device.
+
+The add-on is **generic**: it activates the write use cases the *device
+itself* advertises over SPINE, not a hardcoded list. Two use cases are shipped:
+
+- **OHPCF** (heat-pump compressor flexibility): on a compatible heat pump
+  (e.g. a Saunier Duval/Vaillant VR920 exposing the `SmartEnergyManagementPs`
+  feature), one **button** per action appears (`schedule`, `pause`, `resume`,
+  `abort` — filtered by device capability), plus a read-only `process_state`
+  sensor carrying the compressor's real SPINE state. Read-only sensors
+  (requested/max power, start time, minimal run/pause durations,
+  pausable/stoppable) are also exposed alongside it.
+- **LPC** (limitation of power consumption): on any controllable system that
+  exposes the `LoadControl` feature (heat pumps, wallboxes, inverters,
+  batteries, sub-meters), a `number` entity appears representing the active
+  power limit in watts (W). Setting it caps the device's consumption; the
+  entity reflects the device-reported limit. The slider's `max` reflects the
+  device's nominal max when advertised, otherwise a fallback ceiling applies
+  (`write.lpc_max_limit_w`, default 25000 W); the device rejects out-of-range
+  values via SPINE. Read-only sensors (current consumption limit, failsafe
+  power limit, nominal max, failsafe duration) are also exposed alongside it.
+
+| Use case | Typical device | HA entity | Status |
+|----------|----------------|-----------|--------|
+| OHPCF | Heat pumps | `button` ×4 (schedule/pause/resume/abort) + `process_state` sensor | ✅ shipped |
+| LPC | Heat pumps, wallboxes, controllable loads | `number` (W limit) | ✅ shipped |
+| LPP | Inverters | `number` (W limit) | 🚧 planned |
+| OPEV / OSCEV | Wallboxes | `number` / `climate` | 🚧 planned |
+
+Adding a use case is a self-contained module — the bridge and dispatcher pick
+it up automatically, no code change required outside the module. See
+[`DOCS.md`](./DOCS.md#write-commands-control-entities) for the full write
+pipeline, the configuration knobs, and per-use-case details.
+
+> ⚠️ Enabling write commands turns the add-on into a controller. Enable it
+> only when you intend to control the device, and on a trusted network.
 
 ## Troubleshooting
 
@@ -114,18 +210,18 @@ re-pair. Keep backups.
 | Pairing fails / denied | Device already has its max CEM count | Remove an old CEM on the device's UI, then retry. |
 | Pairing lost after restart | Persistent `/data` was wiped | Restore from backup, or re-pair (a new cert was generated). |
 | No sensors in HA | MQTT broker not available | Install the Mosquitto add-on, or set a broker in the add-on config. |
+| MQTT client disconnected | Dev add-on is also running | Stop the dev EEBUS Bridge add-on (mutually exclusive — see above). |
 | Measurements stuck | Device is pull-only and `poll_interval = 0` | Set `poll_interval` to e.g. `60`. |
+| Entities don't update (external broker) | Bridge and HA watch different brokers, or discovery prefix mismatch | Set `log_level: debug`: `mqtt publish` lines show every message sent. If they appear without errors, HA's MQTT integration must point at the same broker (and `discovery_prefix` must match). |
 
 For deeper diagnostics see [`DOCS.md`](./DOCS.md).
 
-## Roadmap
+## Reporting bugs
 
-- [x] Read measurements, manufacturer info, configuration, diagnosis.
-- [x] MQTT discovery + state publishing.
-- [ ] **Write use cases**: LPC (limit consumption), LPP (limit production),
-      OPEV / OSCEV (EV charging control), OHPCF (heat pump control).
-- [ ] Custom certificate import (advanced).
-- [ ] TLS to the MQTT broker.
+If you hit a bug or an unexpected behavior, please open an issue at
+<https://github.com/tbazire/homeassistant-addons/issues> and mention that
+you are running the **production** add-on (slug `eebus_bridge`), with the
+version from the add-on page.
 
 ## License
 

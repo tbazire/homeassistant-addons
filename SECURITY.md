@@ -47,7 +47,7 @@ fix is available.
 | Network exposure | Unauthorized inbound connections | Only the SHIP websocket port and mDNS multicast are required; `host_network: true` is the documented, justified exception. No `privileged`, `full_access`, `host_pid`, `host_dbus`, `docker_api`. |
 | Image supply chain | Tampered image | Multi-arch images are **signed with Cosign** (keyless, GitHub OIDC). Users can verify with `cosign verify`. |
 | Logs | Secret leakage via logs | Both `eebusd` and `eebus-bridge` redact known secret values. MQTT credentials are resolved in `run.sh` and only ever passed as env vars to the bridge. |
-| Container escape | Privilege escalation | Runtime container runs as a **non-root** user. AppArmor is left to HA's internal profile. |
+| Container escape | Privilege escalation | Runtime container runs as a **non-root** user (`eebus`, uid 911; only the s6-overlay supervision and startup bits run as root). Each add-on ships a tailored **custom AppArmor profile** (`apparmor.txt`) instead of HA's generic default. |
 
 ## Security by Design — mandatory rules
 
