@@ -1,27 +1,34 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 Tommy Bazire
 #
-# Home Assistant add-on manifest for EEBUS Bridge.
+# Home Assistant add-on manifest for EEBUS Bridge (production).
 #
 # Security posture:
 #   - host_network: true  REQUIRED. EEBUS uses mDNS multicast (UDP 5353) and
 #     expects the inbound SHIP TCP connection to come from the LAN. Anything
 #     less than host networking breaks pairing on most EEBUS gateways.
 #   - No privileged, full_access, host_pid, host_dbus, host_ipc, docker_api,
-#     map, usb, gpio or uart. Absence is asserted by tests/test_config_validation.py.
+#     usb, gpio or uart. Absence is asserted by tests/test_config_validation.py.
 #   - init: false is MANDATORY with s6-overlay v3 base images.
-#   - Runs as root (default HA behavior with no privileged capabilities).
+#   - AppArmor enabled via the custom profile shipped in apparmor.txt —
+#     mandatory access control on top of the container boundary.
+#   - Privilege model: s6-overlay's /init runs as root (it must, to supervise
+#     and to read /data/options.json which HA writes 0600 root:root). The
+#     service script (run.sh) drops to a dedicated unprivileged user 'eebus'
+#     (uid 911) via s6-setuidgid BEFORE exec-ing eebus-bridge, so the daemon
+#     and its eebusd child subprocess never run as root.
 #
 # Schema vocabulary reference:
 #   https://developers.home-assistant.io/docs/add-ons/configuration
 
 name: EEBUS Bridge
-version: "0.2.0"
+version: "0.3.0"
 slug: eebus_bridge
 description: >-
   Generic EEBUS bridge. Pairs with any EEBUS device on the local network
   (heat pumps, wallboxes, inverters, …) and exposes its measurements as
-  Home Assistant sensors via MQTT discovery.
+  Home Assistant sensors via MQTT discovery. Optionally controls devices
+  (write use cases, off by default).
 url: https://github.com/tbazire/homeassistant-addons/tree/main/eebus_bridge
 arch:
   - aarch64
@@ -33,7 +40,7 @@ startup: services
 boot: auto
 timeout: 30
 host_network: true
-apparmor: false
+apparmor: true
 map:
   - type: data
     read_only: False
@@ -41,21 +48,33 @@ map:
 services:
   - mqtt:want
 options:
-  log_level: "info"
-  poll_interval: "60"
+  log_level: "warning"
+  poll_interval: "30"
   pairing:
     auto_accept: false
     remote_ski: ""
     secret: ""
   eebusd:
-    brand: "EEBusBridge"
-    model: "Bridge-1"
+    brand: "HomeAssistant"
+    model: "BridgeHA"
     serial: "bridge-0001"
     vendor: "EBRG"
     port: 4711
   mqtt:
     prefix: "eebus"
     discovery_prefix: "homeassistant"
+    host: ""
+    port: 1883
+    user: ""
+    password: ""
+    ssl: false
+  write:
+    enable: false
+    use_cases: "auto"
+    device_profile: "auto"
+    lpc_max_limit_w: 0
+    lpc_enabled: false
+    ohpcf_enabled: false
 schema:
   log_level: list(trace|debug|info|warning|error)
   poll_interval: int(1,86400)?
@@ -72,3 +91,15 @@ schema:
   mqtt:
     prefix: match(^[A-Za-z0-9_\-/]+$)
     discovery_prefix: str
+    host: str?
+    port: port?
+    user: str?
+    password: password?
+    ssl: bool
+  write:
+    enable: bool
+    use_cases: match(^(auto|[a-z]+(,[a-z]+)*)$)
+    device_profile: list(auto|heatpump|evse|inverter|battery|generic)
+    lpc_max_limit_w: int(0,1000000)?
+    lpc_enabled: bool
+    ohpcf_enabled: bool

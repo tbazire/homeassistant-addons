@@ -2,11 +2,16 @@ package internal
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"sync"
 	"time"
 
 	"eebusd/internal/scanner"
+	"eebusd/internal/writes"
+	"eebusd/internal/writes/wucapi"
 	"github.com/enbility/eebus-go/api"
 	"github.com/enbility/eebus-go/service"
 	shipapi "github.com/enbility/ship-go/api"
@@ -32,6 +37,11 @@ type App struct {
 	service *service.Service
 	scanner *scanner.Scanner
 
+	// writesDispatcher routes inbound stdin commands to write use cases.
+	// nil when writes are disabled (the default). Set in Setup() when
+	// cfg.Commands is true.
+	writesDispatcher *writes.Dispatcher
+
 	// localSKI is our own SKI (derived from the certificate). Used to skip
 	// ourselves in auto-discovery.
 	localSKI string
@@ -40,6 +50,18 @@ type App struct {
 	discovered     []shipapi.RemoteMdnsService // last mDNS scan
 	pairingState   map[string]string           // SKI -> human-readable state
 	registeredSKIs map[string]struct{}         // SKIs we already called RegisterRemoteService on
+
+	// outMu serializes writes to the NDJSON output so that lines emitted from
+	// concurrent SPINE goroutines (uc_signal / controllable) never interleave.
+	// Without it, two Write calls per line (payload + "\n") can be split by
+	// another goroutine's write, producing a merged "{...}{...}" line that the
+	// bridge rejects as unparseable. Each emitter must write the whole line in
+	// a single Write call under this lock.
+	outMu sync.Mutex
+	// out is the NDJSON sink (uc_signal, controllable). Defaults to os.Stdout
+	// in NewApp; overridable in tests so writeLine can be exercised without
+	// touching the real stdout.
+	out io.Writer
 
 	// pollCtx/pollCancel drive the per-entity periodic pollers (one goroutine
 	// per remote entity, started in HandleEvent on EntityChange+Add). Cancelling
@@ -59,6 +81,7 @@ func NewApp(cfg *Config, logger *Logger) *App {
 		logger:         logger,
 		pairingState:   make(map[string]string),
 		registeredSKIs: make(map[string]struct{}),
+		out:            os.Stdout,
 	}
 }
 
@@ -137,6 +160,49 @@ func (a *App) Setup() error {
 		return fmt.Errorf("register use cases: %w", err)
 	}
 
+	// 7b. Optional write use cases. Only wired when -commands is active. The
+	//     concrete use cases (OHPCF, …) bind themselves to the local entity
+	//     via writes.BindAll, then are added to the service. The dispatcher
+	//     routes inbound stdin commands to them and emits command_result on
+	//     dataOut (stdout in -json mode). The shared event callback lets the
+	//     daemon emit a "controllable" line whenever a remote device announces
+	//     support for one of these use cases.
+	if a.cfg.Commands {
+		// Per-use-case security gate (Config.UseCaseEnabled). Only use cases
+		// the user explicitly enabled are bound, added to the service, and
+		// announced. A disabled use case is fully inert: no SPINE event path,
+		// no HA entity. Consulted in three places — BindAll (skip Bind),
+		// AddUseCase loop (skip service add), and onWriteUseCaseEvent (skip
+		// emit) — to keep the "off" state airtight.
+		enabled := a.cfg.UseCaseEnabled
+		if err := writes.BindAll(localEntity, wucapi.Callbacks{
+			Event:  a.onWriteUseCaseEvent,
+			Signal: a.onWriteUseCaseSignal,
+		}, enabled); err != nil {
+			return fmt.Errorf("bind write use cases: %w", err)
+		}
+		var registered []string
+		for _, uc := range writes.All() {
+			if !enabled(uc.Name()) {
+				continue
+			}
+			wuc := uc.UseCase()
+			if wuc == nil {
+				continue
+			}
+			if err := a.service.AddUseCase(wuc); err != nil {
+				return fmt.Errorf("add write usecase %s: %w", uc.Name(), err)
+			}
+			registered = append(registered, uc.Name())
+		}
+		var dataOut io.Writer
+		if a.cfg.JSONOut {
+			dataOut = os.Stdout
+		}
+		a.writesDispatcher = writes.NewDispatcher(a, dataOut)
+		AppLog.Infof("write commands enabled: %d use case(s) registered (%v)", len(registered), registered)
+	}
+
 	// 8. Generic feature-based scanner.
 	a.scanner = scanner.NewScanner(localEntity, scanner.Options{
 		JSONOut:      a.cfg.JSONOut,
@@ -207,6 +273,266 @@ func (a *App) Shutdown() {
 
 // Service exposes the underlying *service.Service (e.g. for QR/mDNS queries).
 func (a *App) Service() *service.Service { return a.service }
+
+// WritesEnabled reports whether write commands are accepted (i.e. -commands is
+// set and the dispatcher is wired). Main uses it to decide whether to start the
+// stdin reader goroutine.
+func (a *App) WritesEnabled() bool { return a.writesDispatcher != nil }
+
+// HandleCommand routes one raw stdin line (NDJSON command) to the write use
+// case dispatcher. Safe to call from the stdin reader goroutine. Returns nil
+// for empty / non-command lines; returns an error for synchronous dispatch
+// failures (the matching command_result line has already been emitted).
+//
+// If writes are disabled, this is a no-op returning nil.
+func (a *App) HandleCommand(raw []byte) error {
+	if a.writesDispatcher == nil {
+		return nil
+	}
+	return a.writesDispatcher.HandleLine(raw)
+}
+
+// EntityBySkiAndAddr resolves a (ski, entityAddress) pair into the matching
+// remote entity. Used by the write dispatcher to route a command to its
+// target. entityAddress is the dotted form ("3.1") matching entityAddrString.
+//
+// Returns an error if the remote device is unknown or no entity matches.
+func (a *App) EntityBySkiAndAddr(ski, addr string) (spineapi.EntityRemoteInterface, error) {
+	if a.service == nil {
+		return nil, fmt.Errorf("service not started")
+	}
+	rDevice := a.service.LocalDevice().RemoteDeviceForSki(ski)
+	if rDevice == nil {
+		return nil, fmt.Errorf("no remote device for ski %s", maskSKI(ski))
+	}
+	for _, entity := range rDevice.Entities() {
+		if entityAddrString(entity) == addr {
+			return entity, nil
+		}
+	}
+	return nil, fmt.Errorf("entity %s not found on ski %s", addr, maskSKI(ski))
+}
+
+// maskSKI keeps only the tail of a SKI for error/log messages. The SKI is a
+// public device identifier, but we keep only the suffix out of caution for
+// log-aggregation contexts.
+func maskSKI(ski string) string {
+	if len(ski) <= 8 {
+		return "…"
+	}
+	return "…" + ski[len(ski)-8:]
+}
+
+// onWriteUseCaseEvent is the shared callback wired into every write use case.
+// It is invoked when a remote device announces (or stops announcing) support
+// for one of the registered write use cases. We translate that into a
+// "controllable" NDJSON line so the bridge can create the matching HA entity.
+//
+// In text mode (no JSON output) we just log it: there is no consumer for the
+// JSON line.
+func (a *App) onWriteUseCaseEvent(ski string, entity spineapi.EntityRemoteInterface) {
+	if entity == nil || ski == "" {
+		return
+	}
+	// Identify which use cases are now compatible with this entity. The event
+	// itself does not carry the use case name (it is a generic callback), so
+	// we re-query the registry. Cheap (a handful of entries).
+	addr := entityAddrString(entity)
+	entType := string(entity.EntityType())
+	for _, uc := range writes.All() {
+		// Honor the per-use-case security gate: a disabled use case must never
+		// be announced even if it happens to be compatible with the entity.
+		// (In practice a disabled use case was never bound, so it should not
+		// receive events at all — this guard is defense-in-depth.)
+		if !a.cfg.UseCaseEnabled(uc.Name()) {
+			continue
+		}
+		if !uc.IsCompatible(entity) {
+			continue
+		}
+		actions := uc.AvailableActionsForEntity(entity)
+		state := uc.EntityState(entity)
+		rng := a.applyNumberRangeFallback(uc.HAComponent(), uc.NumberRangeForEntity(entity))
+		if a.cfg.JSONOut {
+			a.emitControllable(ski, addr, entType, uc.Name(), uc.HAComponent(), uc.HAUnit(), actions, state, rng)
+		} else {
+			AppLog.Infof("controllable: ski=%s entity=%s usecase=%s actions=%v state=%s",
+				maskSKI(ski), addr, uc.Name(), actions, state)
+		}
+		// Push an initial snapshot of the use case's read signals so the bridge
+		// does not show "unknown" sensors while waiting for the first device
+		// notification. No-op for use cases without read signals. The module's
+		// Signal callback (wired in BindAll) tags each signal with "<uc>:".
+		if a.cfg.JSONOut {
+			uc.EmitSignals(ski, entity)
+		}
+	}
+}
+
+// applyNumberRangeFallback returns the range to advertise for a control entity.
+// When the use case already derived a range from the device (rng != nil), it is
+// returned unchanged. When it did not (rng == nil), a fallback is applied ONLY
+// for number components: Home Assistant always applies a max to a number entity
+// (default 100 when the field is omitted), so a missing range would silently
+// cap the slider at 100 W. The fallback uses the configurable
+// EffectiveLPCMaxLimit() so the operator can raise it for atypical hardware.
+// Non-number components (buttons/switch/select) get nil — they ignore ranges.
+//
+// Extracted from onWriteUseCaseEvent so the fallback rule is unit-testable
+// without a populated write-use-case registry.
+func (a *App) applyNumberRangeFallback(component string, rng *wucapi.NumberRange) *wucapi.NumberRange {
+	if rng != nil || component != "number" {
+		return rng
+	}
+	return &wucapi.NumberRange{
+		Min:    0,
+		Max:    a.cfg.EffectiveLPCMaxLimit(),
+		Step:   1,
+		HasMax: true,
+	}
+}
+
+// onWriteUseCaseSignal is the shared callback wired into every write use case
+// for per-entity read-signal updates. The bound Signal callback tags each
+// signal as "<uc>:<signal>" (see writes.BindAll); we re-derive the entity
+// address and emit a "uc_signal" NDJSON line so the bridge can expose the
+// value as a Home Assistant sensor.
+//
+// In text mode (no JSON output) we just log it: there is no consumer for the
+// JSON line.
+func (a *App) onWriteUseCaseSignal(ski string, entity spineapi.EntityRemoteInterface, tagged, value, valueType, unit string) {
+	if entity == nil {
+		return
+	}
+	uc, signal, ok := splitUcSignal(tagged)
+	if !ok {
+		return
+	}
+	addr := entityAddrString(entity)
+	if a.cfg.JSONOut {
+		a.emitSignal(ski, addr, uc, signal, value, valueType, unit)
+	} else {
+		AppLog.Infof("uc_signal: ski=%s entity=%s usecase=%s signal=%s value=%s",
+			maskSKI(ski), addr, uc, signal, value)
+	}
+}
+
+// splitUcSignal splits a "<uc>:<signal>" tag back into its parts.
+func splitUcSignal(tagged string) (uc, signal string, ok bool) {
+	for i := 0; i < len(tagged); i++ {
+		if tagged[i] == ':' {
+			return tagged[:i], tagged[i+1:], true
+		}
+	}
+	return "", "", false
+}
+
+// writeLine writes one complete NDJSON line (payload + newline) as a single
+// Write call, serialized by outMu. The single-call guarantee is what prevents
+// concurrent SPINE-goroutine emissions from interleaving bytes and producing
+// corrupt merged lines on the bridge side (each line must be either fully
+// present or absent, never half-written).
+func (a *App) writeLine(payload []byte) {
+	a.outMu.Lock()
+	defer a.outMu.Unlock()
+	_, _ = a.out.Write(append(payload, '\n'))
+}
+
+// emitSignal writes one "uc_signal" NDJSON line on stdout. Used in -json mode
+// so the bridge can create/refresh the matching HA sensor. Empty value means
+// the signal is not (yet) available → skipped.
+func (a *App) emitSignal(ski, addr, uc, signal, value, valueType, unit string) {
+	if value == "" {
+		return
+	}
+	type ucSignalLine struct {
+		Kind      string `json:"kind"`
+		SKI       string `json:"ski"`
+		Entity    string `json:"entity"`
+		UseCase   string `json:"usecase"`
+		Signal    string `json:"signal"`
+		Value     string `json:"value"`
+		ValueType string `json:"value_type,omitempty"`
+		Unit      string `json:"unit,omitempty"`
+		Time      string `json:"time"`
+	}
+	line := ucSignalLine{
+		Kind:      "uc_signal",
+		SKI:       ski,
+		Entity:    addr,
+		UseCase:   uc,
+		Signal:    signal,
+		Value:     value,
+		ValueType: valueType,
+		Unit:      unit,
+		Time:      time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	payload, err := json.Marshal(line)
+	if err != nil {
+		AppLog.Warnf("emitSignal marshal: %v", err)
+		return
+	}
+	a.writeLine(payload)
+}
+
+// emitControllable writes one "controllable" NDJSON line on stdout. Used in
+// -json mode so the bridge can create the matching HA control entity.
+//
+// rng carries the optional input range for number-like components (min/max/
+// step). It is serialized as a nested "range" object when non-nil, and omitted
+// entirely otherwise (legacy behavior). The max field is itself optional within
+// the range: a NumberRange with HasMax=false publishes min+step only, so the
+// bridge leaves the HA number unbounded.
+func (a *App) emitControllable(ski, addr, entityType, uc, component, unit string, actions []string, state string, rng *wucapi.NumberRange) {
+	// Built here (not in the writes package) because the wire format belongs
+	// to the daemon's presentation layer, not the writes domain.
+	type rangeLine struct {
+		Min  float64  `json:"min"`
+		Max  *float64 `json:"max,omitempty"`
+		Step float64  `json:"step"`
+	}
+	type controllableLine struct {
+		Kind       string     `json:"kind"`
+		SKI        string     `json:"ski"`
+		Entity     string     `json:"entity"`
+		EntityType string     `json:"entity_type,omitempty"`
+		UseCase    string     `json:"usecase"`
+		Component  string     `json:"component"`
+		Unit       string     `json:"unit,omitempty"`
+		Range      *rangeLine `json:"range,omitempty"`
+		Actions    []string   `json:"actions"`
+		State      string     `json:"state,omitempty"`
+	}
+	if actions == nil {
+		actions = []string{}
+	}
+	var rangeWire *rangeLine
+	if rng != nil {
+		rangeWire = &rangeLine{Min: rng.Min, Step: rng.Step}
+		if rng.HasMax {
+			max := rng.Max
+			rangeWire.Max = &max
+		}
+	}
+	line := controllableLine{
+		Kind:       "controllable",
+		SKI:        ski,
+		Entity:     addr,
+		EntityType: entityType,
+		UseCase:    uc,
+		Component:  component,
+		Unit:       unit,
+		Range:      rangeWire,
+		Actions:    actions,
+		State:      state,
+	}
+	payload, err := json.Marshal(line)
+	if err != nil {
+		AppLog.Warnf("emitControllable marshal: %v", err)
+		return
+	}
+	a.writeLine(payload)
+}
 
 // ============================================================================
 // api.ServiceReaderInterface implementation

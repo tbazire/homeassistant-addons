@@ -22,14 +22,26 @@ import (
 	"strings"
 )
 
-// Kind constants mirror eebusd/internal/scanner/export.go. They are duplicated
-// on purpose: this module has zero import dependency on eebusd.
+// Kind constants mirror eebusd/internal/scanner/export.go and
+// eebusd/internal/writes/dispatch.go. They are duplicated on purpose: this
+// module has zero import dependency on eebusd.
 const (
 	KindDevice        = "device"
 	KindManufacturer  = "manufacturer"
 	KindConfiguration = "configuration"
 	KindMeasurement   = "measurement"
 	KindDiagnosis     = "diagnosis"
+	// Write-channel kinds (added in 0.4.0-dev). "command" is OUTBOUND
+	// (bridge → eebusd stdin); "controllable" and "command_result" are
+	// INBOUND (eebusd stdout → bridge). The parser handles the inbound ones.
+	KindCommand       = "command"
+	KindControllable  = "controllable"
+	KindCommandResult = "command_result"
+	// Use-case read-signal kind (added in 0.6.0-dev). INBOUND: a use case
+	// pushes one of its read values (power estimate, pausable, start time, …)
+	// so the bridge can expose it as a sensor attached to the same device as
+	// the control entity. Read-only: carries no command surface.
+	KindUcSignal = "uc_signal"
 )
 
 // Line is the common envelope embedded by every typed payload.
@@ -67,13 +79,18 @@ type Configuration struct {
 
 type Measurement struct {
 	Line
-	ID        string  `json:"id"`
-	Type      string  `json:"type,omitempty"`
-	Commodity string  `json:"commodity,omitempty"`
-	Scope     string  `json:"scope,omitempty"`
-	Unit      string  `json:"unit,omitempty"`
-	Value     float64 `json:"value,omitempty"`
-	Scale     int     `json:"scale,omitempty"`
+	ID        string `json:"id"`
+	Type      string `json:"type,omitempty"`
+	Commodity string `json:"commodity,omitempty"`
+	Scope     string `json:"scope,omitempty"`
+	Unit      string `json:"unit,omitempty"`
+	// Value is a pointer so we can distinguish a legitimately absent value
+	// (nil → drop the event) from a real measurement equal to zero (non-nil →
+	// publish 0). Previously this was a plain float64 with omitempty, which
+	// made a real 0 indistinguishable from "no value" and silently dropped
+	// legitimate zero measurements (idle power, empty counter, 0°C, …).
+	Value *float64 `json:"value"`
+	Scale int      `json:"scale,omitempty"`
 }
 
 type Diagnosis struct {
@@ -81,6 +98,78 @@ type Diagnosis struct {
 	OperatingState string `json:"operating_state,omitempty"`
 	LastErrorCode  string `json:"last_error_code,omitempty"`
 	UpTime         string `json:"up_time,omitempty"`
+}
+
+// NumberRange is the optional input range for a number-like control entity
+// (LPC power limit, …). It mirrors wucapi.NumberRange on the wire; duplicated
+// here so the bridge keeps zero import dependency on eebusd (same rationale as
+// the other kind structs). Max is a pointer so it can be absent (unbounded
+// number) while Min/Step stay present: when Max is nil the HA number entity is
+// published without a max, letting the user enter any value.
+type NumberRange struct {
+	Min  float64  `json:"min"`
+	Max  *float64 `json:"max,omitempty"`
+	Step float64  `json:"step"`
+}
+
+// Controllable is an INBOUND line (eebusd → bridge) announcing that a remote
+// entity accepts one or more write actions for a given use case. The bridge
+// uses it to create the matching HA control entity/entities (buttons/number/
+// switch/...). Component is the HA discovery component to build ("buttons",
+// "number", …), declared by the use case itself so the bridge stays agnostic.
+// Unit is the Home Assistant unit of measurement for number-like components
+// ("W", "A", …); empty for buttons/switch/select. Range carries the optional
+// min/max/step for number components (nil for buttons/switch/select or when
+// the device does not advertise a ceiling).
+type Controllable struct {
+	Line
+	EntityType string       `json:"entity_type,omitempty"`
+	UseCase    string       `json:"usecase"`
+	Component  string       `json:"component"`
+	Unit       string       `json:"unit,omitempty"`
+	Range      *NumberRange `json:"range,omitempty"`
+	Actions    []string     `json:"actions"`
+	State      string       `json:"state,omitempty"`
+}
+
+// CommandResult is an INBOUND line (eebusd → bridge) reporting the outcome of
+// a previously-dispatched command. MsgCounter is the SPINE message counter
+// (present on success), Error carries a short reason on failure. The bridge
+// logs it and may surface it on a diagnostic topic.
+type CommandResult struct {
+	Line
+	Op         string  `json:"op"`
+	Status     string  `json:"status"` // "ok" | "error"
+	MsgCounter *uint32 `json:"msg_counter,omitempty"`
+	Error      string  `json:"error,omitempty"`
+}
+
+// Command is an OUTBOUND line (bridge → eebusd stdin) requesting a write
+// operation. It is NOT part of the parser's Event union — it is serialized by
+// the bridge when an HA command is received, and written to eebusd's stdin.
+type Command struct {
+	Kind   string  `json:"kind"` // always "command"
+	Op     string  `json:"op"`   // "<uc>.<action>"
+	SKI    string  `json:"ski"`
+	Entity string  `json:"entity"`
+	Value  float64 `json:"value,omitempty"`
+	Unit   string  `json:"unit,omitempty"`
+}
+
+// UcSignal is an INBOUND line (eebusd → bridge) carrying one read-signal value
+// for a use case on a remote entity (e.g. OHPCF requested power estimate). The
+// bridge exposes it as a sensor (or binary_sensor for booleans) attached to the
+// same HA device + entity as the control entity, identified by (SKI, Entity,
+// UseCase, Signal). Value is a typed string; ValueType selects the HA device
+// class / rendering. Unit is optional ("W", "seconds", …). Read-only: there is
+// no command_topic, so this kind never triggers a write to eebusd.
+type UcSignal struct {
+	Line
+	UseCase   string `json:"usecase"`
+	Signal    string `json:"signal"`
+	Value     string `json:"value"`
+	ValueType string `json:"value_type,omitempty"` // number|boolean|date_time|duration
+	Unit      string `json:"unit,omitempty"`
 }
 
 // Event is the discriminated union returned by the parser. Exactly one field
@@ -91,6 +180,9 @@ type Event struct {
 	Configuration *Configuration
 	Measurement   *Measurement
 	Diagnosis     *Diagnosis
+	Controllable  *Controllable
+	CommandResult *CommandResult
+	UcSignal      *UcSignal
 }
 
 // Parser reads NDJSON lines from r and yields typed Events on the returned
@@ -184,18 +276,15 @@ func (p *Parser) parseLine(line string) (Event, bool) {
 			p.logger.Warn("ndjson: bad measurement line", "err", err.Error())
 			return Event{}, false
 		}
-		// Check if value is explicitly null or missing (should be a valid number)
-		var raw map[string]any
-		if err := json.Unmarshal([]byte(line), &raw); err == nil {
-			if val, ok := raw["value"]; ok {
-				if val == nil {
-					p.logger.Warn("ndjson: measurement with null value", "id", m.ID, "type", m.Type)
-					return Event{}, false
-				}
-			} else {
-				p.logger.Warn("ndjson: measurement with missing value field", "id", m.ID, "type", m.Type)
-				return Event{}, false
-			}
+		// value is a pointer: nil means either the field was absent or it was
+		// JSON null. Both cases are "no real measurement" → drop the event
+		// (HA cannot do anything useful with a sensor that has no value, and
+		// rendering 0 would be wrong: it is a fake 0, not a measurement).
+		// A non-nil pointer — including one that points at 0 — is a real value.
+		if m.Value == nil {
+			p.logger.Debug("ndjson: measurement with no value, skipping",
+				"id", m.ID, "type", m.Type)
+			return Event{}, false
 		}
 		return Event{Measurement: &m}, true
 
@@ -206,6 +295,30 @@ func (p *Parser) parseLine(line string) (Event, bool) {
 			return Event{}, false
 		}
 		return Event{Diagnosis: &d}, true
+
+	case KindControllable:
+		var c Controllable
+		if err := json.Unmarshal([]byte(line), &c); err != nil {
+			p.logger.Warn("ndjson: bad controllable line", "err", err.Error())
+			return Event{}, false
+		}
+		return Event{Controllable: &c}, true
+
+	case KindCommandResult:
+		var cr CommandResult
+		if err := json.Unmarshal([]byte(line), &cr); err != nil {
+			p.logger.Warn("ndjson: bad command_result line", "err", err.Error())
+			return Event{}, false
+		}
+		return Event{CommandResult: &cr}, true
+
+	case KindUcSignal:
+		var us UcSignal
+		if err := json.Unmarshal([]byte(line), &us); err != nil {
+			p.logger.Warn("ndjson: bad uc_signal line", "err", err.Error())
+			return Event{}, false
+		}
+		return Event{UcSignal: &us}, true
 
 	default:
 		p.logger.Debug("ndjson: unknown kind, ignoring", "kind", head.Kind)

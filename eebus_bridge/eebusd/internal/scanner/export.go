@@ -264,6 +264,9 @@ func (s *Scanner) renderMeasurementsJSON(env envelope, m *client.Measurement) {
 			ID:       idStr(d.MeasurementId),
 			Value:    d.Value.GetValue(),
 		}
+		if d.Value.Scale != nil {
+			line.Scale = int(*d.Value.Scale)
+		}
 		if desc.MeasurementType != nil {
 			line.Type = string(*desc.MeasurementType)
 		}
@@ -275,9 +278,6 @@ func (s *Scanner) renderMeasurementsJSON(env envelope, m *client.Measurement) {
 		}
 		if desc.Unit != nil {
 			line.Unit = normalizeUnit(string(*desc.Unit))
-		}
-		if d.Value.Scale != nil {
-			line.Scale = int(*d.Value.Scale)
 		}
 		s.writeJSON(line)
 	}
@@ -411,7 +411,7 @@ func (s *Scanner) printDeviceDiagnosis(addr string, dd *client.DeviceDiagnosis) 
 // empty or had not arrived yet).
 func (s *Scanner) printMeasurements(addr string, m *client.Measurement) {
 	descs, err := m.GetDescriptionsForFilter(model.MeasurementDescriptionDataType{})
-	descByID := make(map[model.MeasurementIdType]model.MeasurementDescriptionDataType)
+	descByID := make(map[model.MeasurementIdType]model.MeasurementDescriptionDataType, len(descs))
 	if err == nil {
 		for _, d := range descs {
 			if d.MeasurementId != nil {
@@ -419,6 +419,7 @@ func (s *Scanner) printMeasurements(addr string, m *client.Measurement) {
 			}
 		}
 	}
+
 	data := m.GetRawData()
 	if len(data) == 0 {
 		if len(descs) == 0 {

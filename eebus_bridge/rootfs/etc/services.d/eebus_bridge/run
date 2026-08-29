@@ -6,7 +6,8 @@
 #
 # Responsibilities:
 #   1. Read the HA options via bashio.
-#   2. Resolve the MQTT broker (Supervisor service first, user override next).
+#   2. Resolve the MQTT broker (user override mqtt.host first, Supervisor
+#      service fallback).
 #   3. Ensure SHIP cert dir (/data/eebus) exists.
 #   4. Export every option as an EEBUS_* env var, then exec eebus-bridge.
 #
@@ -25,19 +26,30 @@ main() {
     #    restarts. HA mounts /data at runtime with root ownership.
     local data_dir="${EEBUS_DATA_DIR:-/data/eebus}"
     mkdir -p "${data_dir}"
+    # Chown while we are still root: the daemon drops to the unprivileged
+    # 'eebus' user (uid 911) at the bottom of this script, so /data/eebus must
+    # be writable by that user for scanner.crt/scanner.key/ringbuffer.json.
+    chown -R eebus:eebus "${data_dir}"
 
-    # 2. MQTT broker resolution. Supervisor service (Mosquitto add-on) wins by
-    #    default; the user can override with explicit mqtt.host.
-    local mqtt_host="" mqtt_port="1883" mqtt_user="" mqtt_pass=""
+    # 2. MQTT broker resolution. An explicit mqtt.host in the add-on options
+    #    (external broker) wins; otherwise fall back to the Supervisor service
+    #    (Mosquitto add-on); if neither is available, fail fast.
+    local mqtt_host="" mqtt_port="1883" mqtt_user="" mqtt_pass="" mqtt_ssl="false"
     if bashio::config.has_value 'mqtt.host'; then
         mqtt_host="$(bashio::config 'mqtt.host')"
-        mqtt_port="$(bashio::config 'mqtt.port')"
+        if bashio::config.has_value 'mqtt.port'; then
+            mqtt_port="$(bashio::config 'mqtt.port')"
+        fi
         if bashio::config.has_value 'mqtt.user'; then
             mqtt_user="$(bashio::config 'mqtt.user')"
         fi
         if bashio::config.has_value 'mqtt.password'; then
             mqtt_pass="$(bashio::config 'mqtt.password')"
         fi
+        if bashio::config.true 'mqtt.ssl'; then
+            mqtt_ssl="true"
+        fi
+        bashio::log.info "Using external MQTT broker from configuration"
     elif bashio::services.available 'mqtt'; then
         mqtt_host="$(bashio::services 'mqtt' 'host')"
         mqtt_port="$(bashio::services 'mqtt' 'port')"
@@ -77,10 +89,45 @@ main() {
     fi
     export EEBUS_MQTT_PREFIX="$(bashio::config 'mqtt.prefix')"
     export EEBUS_MQTT_DISCOVERY="$(bashio::config 'mqtt.discovery_prefix')"
+    export EEBUS_MQTT_SSL="${mqtt_ssl}"
+
+    # Write commands (optional, off by default). When enabled, the bridge
+    # opens the stdin backchannel to eebusd and subscribes to HA command
+    # topics so the user can drive the device (OHPCF schedule/pause/resume/
+    # abort for heat pumps, etc.). Warn loudly so a misconfiguration enabling
+    # writes by accident is visible in the add-on log.
+    if bashio::config.true 'write.enable'; then
+        export EEBUS_WRITE_ENABLE="true"
+        export EEBUS_WRITE_USE_CASES="$(bashio::config 'write.use_cases')"
+        export EEBUS_WRITE_DEVICE_PROFILE="$(bashio::config 'write.device_profile')"
+        # Fallback upper bound for the LPC number entity (watts) when the device
+        # does not advertise a nominal max. 0 = eebusd default (25000). Without
+        # an explicit max, Home Assistant caps the slider at 100.
+        export EEBUS_WRITE_LPC_MAX_LIMIT_W="$(bashio::config 'write.lpc_max_limit_w')"
+        # Per-use-case security toggles (opt-in). Even with write.enable=true,
+        # a use case is bound only if its own toggle is true. Defaults to false
+        # so flipping write.enable alone activates nothing until the user
+        # explicitly opts in per use case.
+        export EEBUS_WRITE_LPC_ENABLED="$(bashio::config 'write.lpc_enabled')"
+        export EEBUS_WRITE_OHPCF_ENABLED="$(bashio::config 'write.ohpcf_enabled')"
+        bashio::log.warning "write commands ENABLED — the add-on can now control the device (profile=$(bashio::config 'write.device_profile'), use_cases=$(bashio::config 'write.use_cases'), lpc=$(bashio::config 'write.lpc_enabled'), ohpcf=$(bashio::config 'write.ohpcf_enabled'))"
+    else
+        export EEBUS_WRITE_ENABLE="false"
+        export EEBUS_WRITE_USE_CASES="auto"
+        export EEBUS_WRITE_DEVICE_PROFILE="auto"
+        export EEBUS_WRITE_LPC_ENABLED="false"
+        export EEBUS_WRITE_OHPCF_ENABLED="false"
+    fi
 
     # 4. Exec the bridge. s6-overlay now supervises it; SIGTERM propagates.
-    bashio::log.info "launching eebus-bridge (broker=${mqtt_host}:${mqtt_port})"
-    exec /usr/local/bin/eebus-bridge
+    #    Drop privileges: everything above ran as root (needed for chown of
+    #    /data/eebus and for bashio to read /data/options.json which HA writes
+    #    0600 root:root). s6-setuidgid execs eebus-bridge as the unprivileged
+    #    'eebus' user; the child eebusd subprocess inherits that uid. The
+    #    exported EEBUS_* env vars are preserved across the uid drop.
+    #    s6-setuidgid is shipped by s6-overlay (no extra apk needed).
+    bashio::log.info "launching eebus-bridge (broker=${mqtt_host}:${mqtt_port}, uid=$(id -u eebus))"
+    exec s6-setuidgid eebus /usr/local/bin/eebus-bridge
 }
 
 main "$@"

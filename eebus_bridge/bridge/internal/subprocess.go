@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -28,6 +29,7 @@ type Subprocess struct {
 
 	mu     sync.Mutex
 	cmd    *exec.Cmd
+	stdin  io.WriteCloser // current child's stdin pipe; nil when no child / writes disabled
 	cancel context.CancelFunc
 	runCtx context.Context
 }
@@ -69,6 +71,16 @@ func (s *Subprocess) Run(parent context.Context, maxRestarts int, onStdout func(
 		if err != nil {
 			return fmt.Errorf("stderr pipe: %w", err)
 		}
+		// Take a stdin pipe so the bridge can send write commands back to
+		// eebusd (backchannel). Errors here are non-fatal: if eebusd was
+		// launched without -commands it simply never reads stdin, and a nil
+		// stdin is fine (the pipe is only used when WriteStdin is called, which
+		// only happens when the bridge received a command_topic message).
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			s.logger.Warn("eebusd stdin pipe unavailable, write commands disabled", "err", err.Error())
+			stdin = nil
+		}
 
 		// Mirror child stderr to our stdout so HA captures it. (Our own logs
 		// already go to stdout; this keeps the eebusd logs alongside.)
@@ -90,6 +102,7 @@ func (s *Subprocess) Run(parent context.Context, maxRestarts int, onStdout func(
 
 		s.mu.Lock()
 		s.cmd = cmd
+		s.stdin = stdin
 		s.mu.Unlock()
 
 		// Hand stdout to the caller for as long as this process lives.
@@ -144,6 +157,28 @@ func (s *Subprocess) Stop() {
 		_ = cmd.Process.Signal(os.Interrupt)
 	}
 	_ = cancel
+}
+
+// WriteStdin writes one line to the child's stdin. The caller MUST pass a
+// single NDJSON line WITHOUT the trailing newline; WriteStdin appends it.
+//
+// Returns an error if writes are disabled (no stdin pipe) or the child is not
+// running. Safe for concurrent use: the underlying stdin is mutex-guarded.
+//
+// This is the bridge→eebusd backchannel: it carries Command lines produced by
+// HA command_topic messages and routed through the orchestrator.
+func (s *Subprocess) WriteStdin(line string) error {
+	s.mu.Lock()
+	stdin := s.stdin
+	s.mu.Unlock()
+	if stdin == nil {
+		return fmt.Errorf("write commands disabled (eebusd stdin not available)")
+	}
+	if !strings.HasSuffix(line, "\n") {
+		line += "\n"
+	}
+	_, err := io.WriteString(stdin, line)
+	return err
 }
 
 // mirror copies src to dst until src returns EOF.

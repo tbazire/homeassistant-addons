@@ -10,6 +10,75 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [0.3.0] - 2026-08-29
+
+Migration of the dev channel (validated up to `0.9.0-dev` on a real device)
+to the production add-on. The add-on is no longer read-only: an opt-in control
+channel lets Home Assistant drive compatible devices. Security posture is
+raised to match the dev channel (non-root daemon, custom AppArmor profile).
+
+### Added
+
+- **Write/control channel (off by default).** Setting `write.enable: true`
+  opens an opt-in control channel so Home Assistant can act on the device.
+  Each use case has its own security toggle (`write.lpc_enabled`,
+  `write.ohpcf_enabled`, both default `false`) — a use case is bound,
+  announced and exposed only when its toggle is on. The dispatcher validates
+  device compatibility before every write; command topics are subscribed
+  individually (no wildcards).
+- **OHPCF use case (heat-pump compressor flexibility).** One HA `button` per
+  action (`schedule` / `pause` / `resume` / `abort`, filtered by device
+  capability) plus a read-only `process_state` sensor carrying the raw SPINE
+  state, and 8 read-only sensors (requested/max power, start time, min run/
+  pause durations, is_pausable / is_stoppable, is_available).
+- **LPC use case (limitation of power consumption).** A `number` entity (W)
+  to cap the consumption of any controllable system exposing `LoadControl`
+  (heat pumps, wallboxes, inverters, batteries); 0 clears the limit. The
+  slider is bounded by the device's nominal max when advertised, with a
+  configurable fallback (`write.lpc_max_limit_w`, default 25000 W). Four
+  read-only sensors (consumption_limit, failsafe_power_limit, nominal_max,
+  failsafe_duration_min).
+- **External MQTT broker support** (`mqtt.host`, `mqtt.port`, `mqtt.user`,
+  `mqtt.password`, `mqtt.ssl`), resolving
+  [#40](https://github.com/tbazire/homeassistant-addons/issues/40). Setting
+  `mqtt.host` connects to that broker instead of the Supervisor-discovered
+  one; `mqtt.ssl: true` switches to TLS (`ssl://`, system CA store, typically
+  port 8883). Home Assistant's MQTT integration must target the same broker.
+- **MQTT traffic logging.** With `log_level: debug` (or `trace`), every
+  message exchanged with the broker is logged: outgoing publishes
+  (`mqtt publish` with topic, payload, retain), incoming commands
+  (`mqtt recv`), subscriptions (`mqtt subscribe`) and deliberately-skipped
+  states (`state publish skipped`).
+- **New production defaults.** `log_level: warning`, `poll_interval: 30`,
+  `eebusd.brand: HomeAssistant`, `eebusd.model: BridgeHA`. Existing installs
+  keep their configured values; the defaults apply to fresh installs (or
+  after resetting options).
+
+### Security
+
+- **The daemon now runs as a non-root user** (`eebus`, uid/gid 911).
+  s6-overlay's `/init` still starts as root (supervision + reading
+  `/data/options.json`, written `0600 root:root`), but `run.sh` drops to
+  `eebus` via `s6-setuidgid` before exec-ing `eebus-bridge`.
+- **Custom AppArmor profile (`apparmor.txt`)** replacing HA's generic
+  default. Grants only s6-overlay supervision paths, the TLS CA bundle,
+  TCP/UDP networking, `/data`, and the privilege-drop capabilities.
+- The repository-root `SECURITY.md` now matches this posture (its
+  "non-root, AppArmor default profile" claim predates the migration).
+
+### Fixed
+
+- MQTT subscriptions are re-applied on reconnect (paho does not remember
+  them with auto-reconnect enabled; a command topic subscribed before a
+  network blip would silently stop firing).
+- NDJSON lines can no longer interleave under concurrent emission (single
+  atomic write per line, serialized by a mutex) — the root cause of
+  occasional `WARN ndjson: skipping unparseable line` and missing sensors.
+- The LPC `consumption_limit` sensor refreshes to 0 after the limit is
+  cleared (it used to keep its last value indefinitely).
+- Write use-case toggles reach the daemon correctly (bool flags are emitted
+  as single `-flag=value` tokens).
+
 ## [0.2.0] - 2026-07-26
 
 ### Fixed
@@ -100,7 +169,8 @@ modification de la generation des fichier json
 - SHIP pairing secret optional, stored as an HA `password` option.
 - Persistent state scoped to `/data`.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/tbazire/homeassistant-addons/releases/tag/v0.3.0
 [0.2.0]: https://github.com/tbazire/homeassistant-addons/releases/tag/v0.2.0
 [0.1.3-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/v0.1.3-dev
 [0.1.2-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/v0.1.2-dev
