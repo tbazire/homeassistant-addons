@@ -148,14 +148,15 @@ func TestOnControllable_Buttons_Dedup(t *testing.T) {
 }
 
 // TestOnControllable_UnknownComponentNoDiscovery: a component we do not model
-// (e.g. "select") must yield no discovery rather than crashing or emitting a
-// half-formed payload.
+// (e.g. "light") must yield no discovery rather than crashing or emitting a
+// half-formed payload. ("select" is now a modeled component — see the HVAC
+// tests below.)
 func TestOnControllable_UnknownComponentNoDiscovery(t *testing.T) {
 	m := NewMapper("eebus", "homeassistant")
 	c := &Controllable{
 		Line:      Line{SKI: "ski", Entity: "0"},
-		UseCase:   "futureselect",
-		Component: "select",
+		UseCase:   "futurelight",
+		Component: "light",
 		Actions:   []string{"pick"},
 	}
 	if discs := m.OnControllable(c); len(discs) != 0 {
@@ -313,7 +314,7 @@ func TestDecodeHACommand_ButtonActions(t *testing.T) {
 	}
 	for _, tc := range cases {
 		topic := "eebus/s/3_1/ohpcf/btn/" + tc.action + "/cmd"
-		op, val, unit, ok := decodeHACommand(topic, "PRESS", c)
+		op, val, unit, _, ok := decodeHACommand(topic, "PRESS", c)
 		if !ok {
 			t.Errorf("%s: decode failed", tc.action)
 			continue
@@ -338,7 +339,7 @@ func TestDecodeHACommand_ButtonIgnoresPayload(t *testing.T) {
 	// the topic, not the payload. Any payload must still decode the same op.
 	c := &Controllable{Line: Line{SKI: "s", Entity: "3.1"}, UseCase: "ohpcf"}
 	for _, payload := range []string{"PRESS", "", "anything"} {
-		op, _, _, ok := decodeHACommand("eebus/s/3_1/ohpcf/btn/pause/cmd", payload, c)
+		op, _, _, _, ok := decodeHACommand("eebus/s/3_1/ohpcf/btn/pause/cmd", payload, c)
 		if !ok || op != "ohpcf.pause" {
 			t.Errorf("payload %q → op=%q ok=%v, want ohpcf.pause", payload, op, ok)
 		}
@@ -349,7 +350,7 @@ func TestDecodeHACommand_ButtonIgnoresPayload(t *testing.T) {
 
 func TestDecodeHACommand_ValueSet(t *testing.T) {
 	c := &Controllable{Line: Line{SKI: "s", Entity: "1.1"}, UseCase: "lpc", Component: "number", Unit: "W"}
-	op, val, unit, ok := decodeHACommand("eebus/s/1_1/lpc/value/cmd", "1500", c)
+	op, val, unit, _, ok := decodeHACommand("eebus/s/1_1/lpc/value/cmd", "1500", c)
 	if !ok {
 		t.Fatal("decode failed")
 	}
@@ -366,7 +367,7 @@ func TestDecodeHACommand_ValueSet(t *testing.T) {
 
 func TestDecodeHACommand_ValueFractional(t *testing.T) {
 	c := &Controllable{Line: Line{SKI: "s", Entity: "1.1"}, UseCase: "lpc", Component: "number", Unit: "W"}
-	_, val, _, ok := decodeHACommand("eebus/s/1_1/lpc/value/cmd", "750.5", c)
+	_, val, _, _, ok := decodeHACommand("eebus/s/1_1/lpc/value/cmd", "750.5", c)
 	if !ok {
 		t.Fatal("decode failed for fractional value")
 	}
@@ -379,7 +380,7 @@ func TestDecodeHACommand_ValueInvalid(t *testing.T) {
 	// A non-numeric payload must decode to ok=false so the orchestrator logs
 	// and drops it rather than sending a garbage value to eebusd.
 	c := &Controllable{Line: Line{SKI: "s", Entity: "1.1"}, UseCase: "lpc", Component: "number"}
-	_, _, _, ok := decodeHACommand("eebus/s/1_1/lpc/value/cmd", "not-a-number", c)
+	_, _, _, _, ok := decodeHACommand("eebus/s/1_1/lpc/value/cmd", "not-a-number", c)
 	if ok {
 		t.Error("non-numeric payload must decode to ok=false")
 	}
@@ -391,7 +392,7 @@ func TestDecodeHACommand_ValueInvalid(t *testing.T) {
 // press as the representative command.
 func TestCommandWireShape(t *testing.T) {
 	c := &Controllable{Line: Line{SKI: "abc", Entity: "3.1"}, UseCase: "ohpcf"}
-	op, val, unit, ok := decodeHACommand("eebus/abc/3_1/ohpcf/btn/pause/cmd", "PRESS", c)
+	op, val, unit, _, ok := decodeHACommand("eebus/abc/3_1/ohpcf/btn/pause/cmd", "PRESS", c)
 	if !ok {
 		t.Fatal("decode failed")
 	}

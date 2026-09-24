@@ -43,17 +43,28 @@ func (c *Config) EffectiveLPCMaxLimit() float64 {
 //
 // The default for any unknown name is false (fail-closed): a future use case
 // that ships before its toggle is wired cannot accidentally become active. Only
-// the two known names (lpc, ohpcf) consult their dedicated flag.
+// the known names (lpc, ohpcf, and the four HVAC ones) consult their dedicated
+// flag. The HVAC toggle additionally gates the HVAC READ use cases (mdt, mdsf,
+// mot, mrt, mrhsf) registered in the scanner, so the whole HVAC entity surface
+// (water heater / climate controls) is opt-in with a single option.
 func (c *Config) UseCaseEnabled(name string) bool {
 	switch name {
 	case "lpc":
 		return c.LPCEnabled
 	case "ohpcf":
 		return c.OHPCFEnabled
+	case "cdt", "cdsf", "crht", "crhsf":
+		return c.HVACEnabled
 	default:
 		return false
 	}
 }
+
+// HVACUseCasesActive reports whether the HVAC feature set (read use cases +
+// write modules) is active. Reads are gated on the HVAC flag alone; writes are
+// additionally gated on Commands by the caller (BindAll only runs when
+// Commands is set), so "writes blocked when write is off" holds structurally.
+func (c *Config) HVACUseCasesActive() bool { return c.HVACEnabled }
 
 // Config holds all runtime configuration parsed from command-line flags.
 type Config struct {
@@ -95,6 +106,13 @@ type Config struct {
 	// cleanest "off" state (no phantom entities, no command topic subscribed).
 	LPCEnabled   bool
 	OHPCFEnabled bool
+
+	// HVACEnabled gates the HVAC use cases (DHW circuit + HVAC room), read and
+	// write sides alike. Set via the add-on option write.hvac_enabled. Like the
+	// other per-use-case flags it defaults to false: no HVAC entity is created
+	// unless the user opts in. The generic scanner keeps exposing raw
+	// temperature measurements regardless (fallback surface).
+	HVACEnabled bool
 
 	// LPCMaxLimitW is the fallback upper bound (watts) applied to the LPC
 	// number entity when the device does not advertise a nominal maximum
@@ -152,6 +170,7 @@ func (c *Config) RegisterFlags(fs *flag.FlagSet) {
 	// the daemon's use-case loops (see Config.UseCaseEnabled).
 	fs.BoolVar(&c.LPCEnabled, "write-lpc-enabled", false, "enable the LPC write use case (opt-in)")
 	fs.BoolVar(&c.OHPCFEnabled, "write-ohpcf-enabled", false, "enable the OHPCF write use case (opt-in)")
+	fs.BoolVar(&c.HVACEnabled, "write-hvac-enabled", false, "enable the HVAC use cases, read and write (opt-in)")
 
 	// LPCMaxLimitW: fallback max for the LPC number entity when the device does
 	// not expose a nominal max. See Config.LPCMaxLimitW for the rationale.
@@ -216,13 +235,13 @@ func (c *Config) String() string {
 			"remoteski=%s secret=%s autoaccept=%v heartbeat=%s\n"+
 			"loglevel=%s json=%v list=%v poll-interval=%s\n"+
 			"commands=%v write-usecases=%s write-profile=%s\n"+
-			"write-lpc-max-limit-w=%s",
+			"write-lpc-max-limit-w=%s write-hvac-enabled=%v",
 		c.Port, c.Brand, c.Model, c.Serial, c.VendorCode,
 		c.CertPath, c.KeyPath, c.CertDir,
 		c.RemoteSKI, secret, c.AutoAccept, c.Heartbeat,
 		c.LogLevel, c.JSONOut, c.ListAll, c.PollInterval,
 		c.Commands, c.WriteUseCases, c.WriteProfile,
-		lpcMaxDisplay(c.LPCMaxLimitW),
+		lpcMaxDisplay(c.LPCMaxLimitW), c.HVACEnabled,
 	)
 }
 

@@ -134,7 +134,7 @@ broker, otherwise discovery messages will not reach the instance.
 | External broker unreachable | Check `mqtt.host`/`port`/credentials in the add-on config; for TLS brokers set `mqtt.ssl: true` (and usually port `8883`). The add-on log shows which broker was resolved at startup. |
 | HA sensors missing | Confirm discovery messages: `mosquitto_sub -t 'homeassistant/sensor/eebus_bridge/#' -v`. |
 | Wrong device name in HA | The `manufacturer` kind provides brand/model. If missing, the device exposes no DeviceClassification server feature. |
-| Write command has no effect | `write.enable` must be `true` and the per-use-case toggle (`write.lpc_enabled` / `write.ohpcf_enabled`) too. Confirm the entity appears as a button/number in HA and check the bridge log for `command result status=error`. The device may simply not support the requested action (e.g. a compressor that is not pausable). |
+| Write command has no effect | `write.enable` must be `true` and the per-use-case toggle (`write.lpc_enabled` / `write.ohpcf_enabled` / `write.hvac_enabled`) too. Confirm the entity appears as a button/number/select in HA and check the bridge log for `command result status=error`. The device may simply not support the requested action (e.g. a compressor that is not pausable, a mode not related to the DHW system function). |
 
 ## Write commands (control entities)
 
@@ -177,18 +177,21 @@ HA UI ──► MQTT command_topic ──► eebus-bridge ──► stdin NDJSON
 | `write.lpc_enabled` | bool | `false` | Per-use-case security toggle for LPC (power consumption limit). Must be `true` for the LPC `number` entity and its sensors to appear. **Opt-in:** `write.enable: true` alone is not enough — see [Per-use-case toggles](#per-use-case-toggles) below. |
 | `write.ohpcf_enabled` | bool | `false` | Per-use-case security toggle for OHPCF (heat-pump compressor flexibility). Must be `true` for the OHPCF buttons and their sensors to appear. **Opt-in:** `write.enable: true` alone is not enough — see [Per-use-case toggles](#per-use-case-toggles) below. |
 | `write.lpc_max_limit_w` | int | `0` | Fallback upper bound (W) for the LPC power-limit slider when the device does not advertise a nominal max. `0` = built-in default (25000 W). Raise it for atypical hardware (e.g. a commercial wallbox); the device's SPINE layer still rejects genuinely out-of-range values. |
+| `write.hvac_enabled` | bool | `false` | Per-use-case security toggle for the HVAC set — the four write use cases (CDT, CDSF, CRHT, CRHSF) **and** the five read use cases (MDT, MDSF, MOT, MRT, MRHSF). Must be `true` for the `water_heater` entity, the room controls and the HVAC sensors to appear. **Opt-in:** `write.enable: true` alone is not enough — see [Per-use-case toggles](#per-use-case-toggles) below and [HVAC use cases](#hvac-use-cases-040). |
 
 ### Per-use-case toggles
 
 `write.enable` is only the **master switch**: it opens the
 control channel, but it does not activate any use case by itself. Each use
-case has its own toggle (`write.lpc_enabled`, `write.ohpcf_enabled`), and all
+case has its own toggle (`write.lpc_enabled`, `write.ohpcf_enabled`, and
+`write.hvac_enabled` for the whole HVAC set), and all
 default to `false`. A use case is bound, announced to the device, and exposed
 in Home Assistant **only** when its toggle is `true`.
 
-This is deliberate: the two shipped use cases control different physical
-quantities (a power limit vs. a heat-pump compressor), and a user who only
-wants one should not have the other silently exposed. A disabled use case
+This is deliberate: the shipped use cases control different physical
+quantities (a power limit, a heat-pump compressor, domestic hot water and
+room heating), and a user who only wants one should not have the others
+silently exposed. A disabled use case
 leaves no trace — no HA entity, no command topic, no sensor — because the
 daemon skips it before it can subscribe to any SPINE event.
 
@@ -225,6 +228,10 @@ write:
 |----------|-----------|-----------------|-----------|---------|
 | **OHPCF** | Optimization of Self-Consumption by Heat-Pump Compressor Flexibility | Heat pumps (any brand exposing the `SmartEnergyManagementPs` feature: e.g. Saunier Duval/Vaillant VR920, …) | `button` ×4 + `sensor` (process_state) | buttons `schedule` / `pause` / `resume` / `abort` (filtered by capability) |
 | **LPC** | Limitation of Power Consumption | Any controllable system exposing `LoadControl` (heat pumps, wallboxes, inverters, batteries, sub-meters) | `number` | power limit in W (set / clear) |
+| **CDT** | Configuration of DHW Temperature | DHW circuits (heat pumps, boilers) | composes the `water_heater` | target temperature (°C) |
+| **CDSF** | Configuration of DHW System Function | DHW circuits | composes the `water_heater` | operation mode (auto/on/off/eco) |
+| **CRHT** | Configuration of Room Heating Temperature | HVAC rooms | `number` | room setpoint (°C) |
+| **CRHSF** | Configuration of Room Heating System Function | HVAC rooms | `select` (or `switch` when only on/off) | heating mode (auto/on/off/eco) |
 | LPP *(planned)* | Limitation of Power Production | Inverters | `number` | production limit in W |
 | OPEV / OSCEV *(planned)* | EV charging control | Wallboxes | `number` / `select` | per-phase current obligation/recommendation |
 
@@ -233,6 +240,58 @@ self-contained module under `eebusd/internal/writes/<uc>/` that registers
 itself at init time — the bridge and dispatcher pick it up automatically, with
 no code change outside the module. **The add-on is generic**: it targets any
 EBUS-conformant device that advertises the use case, not a specific brand.
+
+### HVAC use cases (0.4.0)
+
+With `write.enable: true` **and** `write.hvac_enabled: true`, the nine HVAC
+use cases grafted from the [`volschin/eebus-go`](https://github.com/volschin/eebus-go)
+fork (v0.7.1-0.20260731151816-4b2730e630aa, same spine-go pin as our vendor)
+become active:
+
+| Direction | Use case | Entity target | What it provides |
+|-----------|----------|---------------|------------------|
+| read | `ma/mdt` | DHWCircuit | DHW temperature → water_heater current temperature + sensor |
+| read | `ma/mdsf` | DHWCircuit | DHW operation mode + one-time overrun state |
+| read | `ma/mot` | TemperatureSensor | outdoor temperature sensor |
+| read | `ma/mrt` | HVACRoom | room temperature sensor |
+| read | `ma/mrhsf` | HVACRoom | heating operation mode (feeds the select/switch state) |
+| write | `ca/cdt` | DHWCircuit | target temperature (°C) |
+| write | `ca/cdsf` | DHWCircuit | DHW operation mode (auto/on/off/eco) |
+| write | `ca/crht` | HVACRoom | room setpoint (°C) |
+| write | `ca/crhsf` | HVACRoom | heating mode |
+
+**Home Assistant surface:**
+
+- **DHW circuit → `water_heater`**: the bridge composes the CDT number
+  (target temperature), the CDSF mode and the MDT/MDSF read signals into a
+  single `water_heater` entity per DHW circuit — current temperature, target
+  temperature (with the device-advertised min/max), operation modes. The
+  one-time DHW overrun (CDSF scenarios 2/3) is exposed read-only for now (a
+  sensor via MDSF); the start/stop controls may follow in a later release.
+- **HVAC room → climate-style controls**: a `select` for the heating mode
+  (rendered as a `switch` when the supported set is exactly on/off) and a
+  `number` for the room setpoint, plus the semantic temperature sensors.
+  A full `climate` entity is deliberately not synthesized: the
+  select/number decomposition maps 1:1 onto the SPINE data model and keeps
+  every command a plain, auditable MQTT write.
+
+**Genericity:** activation is standard EEBUS negotiation only — the remote
+must announce each use case via `UseCaseSupportData` with matching scenarios,
+and the write path re-validates compatibility before every dispatch
+(`AvailableScenariosForEntity`, same pattern as OHPCF). No brand, model or
+SKI appears anywhere. With `write.hvac_enabled: false` (the default) nothing
+HVAC registers: no entity, no topic, no change versus previous versions, and
+the generic measurement scanner remains the only temperature surface.
+
+**CDT mode resolution:** EEBUS defines DHW setpoints *per operation mode*.
+The water heater's single target temperature is written for the circuit's
+**current** operation mode (resolved through CDSF) and fails closed while the
+mode is unknown — the add-on never guesses a mode.
+
+> ℹ️ Which semantic sensors appear depends on the measurement descriptions the
+> device actually announces (e.g. flow/return temperature scopes vary per
+> vendor). Run with `log_level: debug` and check the `desc id=… type=… scope=…`
+> inventory lines if a sensor you expect is missing.
 
 ### OHPCF example (heat pump)
 

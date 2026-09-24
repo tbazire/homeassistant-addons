@@ -32,7 +32,7 @@ func TestArgs_BoolFlagsUseEqualsForm(t *testing.T) {
 	args := cfg.Args()
 
 	// Every bool write flag must appear as a single "-flag=value" token.
-	for _, flag := range []string{"-write-lpc-enabled", "-write-ohpcf-enabled"} {
+	for _, flag := range []string{"-write-lpc-enabled", "-write-ohpcf-enabled", "-write-hvac-enabled"} {
 		for _, a := range args {
 			if a == flag {
 				t.Errorf("bool flag %q emitted as a bare token: a space-separated "+
@@ -72,6 +72,9 @@ func TestArgs_BothWriteFlagsPropagate(t *testing.T) {
 			args := cfg.Args()
 			assertFlagValue(t, args, "-write-lpc-enabled", tc.wantLPC)
 			assertFlagValue(t, args, "-write-ohpcf-enabled", tc.wantOHPCF)
+			// The HVAC toggle defaults to false when withWriteEnv does not set
+			// it — the fail-closed default is part of the contract.
+			assertFlagValue(t, args, "-write-hvac-enabled", "false")
 		})
 	}
 }
@@ -103,6 +106,20 @@ func withWriteEnv(t *testing.T, lpc, ohpcf bool) {
 	set("EEBUS_WRITE_ENABLE", "true")
 	set("EEBUS_WRITE_LPC_ENABLED", boolStr(lpc))
 	set("EEBUS_WRITE_OHPCF_ENABLED", boolStr(ohpcf))
+}
+
+// TestArgs_HVACFlagPropagates asserts the HVAC opt-in toggle lands in Args()
+// with the correct boolean value (same wire form as the other bool flags).
+func TestArgs_HVACFlagPropagates(t *testing.T) {
+	for _, hvac := range []bool{true, false} {
+		withWriteEnv(t, false, false)
+		t.Setenv("EEBUS_WRITE_HVAC_ENABLED", boolStr(hvac))
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		assertFlagValue(t, cfg.Args(), "-write-hvac-enabled", boolStr(hvac))
+	}
 }
 
 func boolStr(b bool) string {

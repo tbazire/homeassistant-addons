@@ -174,7 +174,7 @@ By default this add-on is **read-only** (sensors only). Setting
 also **act** on the device.
 
 The add-on is **generic**: it activates the write use cases the *device
-itself* advertises over SPINE, not a hardcoded list. Two use cases are shipped:
+itself* advertises over SPINE, not a hardcoded list. Four are shipped:
 
 - **OHPCF** (heat-pump compressor flexibility): on a compatible heat pump
   (e.g. a Saunier Duval/Vaillant VR920 exposing the `SmartEnergyManagementPs`
@@ -199,8 +199,9 @@ itself* advertises over SPINE, not a hardcoded list. Two use cases are shipped:
   batteries, sub-meters), a `number` entity appears representing the active
   power limit in watts (W). Setting it caps the device's consumption; the
   entity reflects the device-reported limit. The slider's `max` reflects the
-  device's nominal max when advertised, otherwise the input is unbounded (the
-  device rejects out-of-range values via SPINE). Read-only sensors (current
+  device's nominal max when advertised, otherwise a fallback ceiling applies
+  (`write.lpc_max_limit_w`, default 25000 W); the device rejects out-of-range
+  values via SPINE. Read-only sensors (current
   consumption limit, failsafe power limit, nominal max, failsafe duration) are
   also exposed alongside it.
 
@@ -208,8 +209,8 @@ itself* advertises over SPINE, not a hardcoded list. Two use cases are shipped:
 |----------|----------------|-----------|--------|
 | OHPCF | Heat pumps | `button` ×4 + `sensor` (process_state) | ✅ shipped |
 | LPC | Heat pumps, wallboxes, controllable loads | `number` (W limit) | ✅ shipped |
-| HVAC CDT/CDSF | DHW circuits (heat pumps, boilers) | `water_heater` (composed) | 🧪 0.10.0-dev, needs field validation |
-| HVAC CRHT/CRHSF | HVAC rooms | `number` (setpoint) + `select`/`switch` (mode) | 🧪 0.10.0-dev, needs field validation |
+| HVAC CDT/CDSF | DHW circuits (heat pumps, boilers) | `water_heater` (composed) | ✅ shipped (validated on device) |
+| HVAC CRHT/CRHSF | HVAC rooms | `number` (setpoint) + `select`/`switch` (mode) | ✅ shipped (validated on device) |
 | LPP | Inverters | `number` (W limit) | 🚧 planned |
 | OPEV / OSCEV | Wallboxes | `number` / `select` | 🚧 planned |
 
