@@ -72,14 +72,50 @@ Tested device / model: ____________________   Date: __________
       arrive (if the device pushes).
 - [ ] Setting `poll_interval = 30` resumes periodic updates within ~30s.
 
-## 7. Restart resilience
+## 7. HVAC use cases (0.10.0-dev, needs a real HVAC device)
+
+Setup: `write.enable: true` **and** `write.hvac_enabled: true`. The device must
+announce the HVAC use cases over SPINE (`DHWCircuit` / `HVACRoom` /
+`TemperatureSensor` entities).
+
+- [ ] **Off by default:** with `write.hvac_enabled: false` (or `write.enable:
+      false`), pairing the same device produces EXACTLY the same entities as
+      0.9.0-dev — no `water_heater`, no mode select/switch, no room setpoint
+      number, and no `mdt/mdsf/mot/mrt/mrhsf` sensors. The generic temperature
+      measurement sensors still appear (scanner fallback).
+- [ ] **Non-HVAC device unchanged:** with `write.hvac_enabled: true`, pairing a
+      device WITHOUT HVAC support (wallbox, VR920 without HVAC features)
+      creates no HVAC entity.
+- [ ] A `water_heater` entity appears per DHW circuit: current temperature
+      (from `mdt`), target temperature with the device's min/max, and the
+      supported operation modes.
+- [ ] Setting the target temperature publishes on `…/cdt/value/cmd` and the
+      device applies it (`command_result status=ok`); the water heater state
+      follows on the next refresh.
+- [ ] Changing the operation mode publishes on `…/cdsf/mode/cmd` and the mode
+      state (fed by `mdsf/operation_mode`) follows.
+- [ ] Per HVAC room: a mode `select` (or `switch` when only on/off is
+      supported) and a setpoint `number` (°C, device range) appear; both
+      control the device and reflect its state.
+- [ ] Writing a setpoint while the DHW mode is unknown fails closed with a
+      clean `command_result status=error` (never a guessed mode).
+- [ ] Unsupported mode writes are rejected by the device with a visible
+      `command_result status=error`.
+- [ ] **Writes blocked when write off:** reverting `write.enable: false`
+      removes every control entity and command topic (read signals included).
+- [ ] **Description inventory (report it):** with `log_level: debug`, collect
+      the `desc id=… type=… scope=… unit=…` lines and the `uc_signal` lines
+      (`mdt/mdsf/mot/mrt/mrhsf`) — flow/return temperature scopes and overrun
+      status values vary per vendor and drive the production mapping.
+
+## 8. Restart resilience
 
 - [ ] Restarting the add-on keeps all sensors (no duplicates, no orphan).
 - [ ] Restarting the add-on keeps the pairing (no re-pair needed).
 - [ ] Killing `eebusd` inside the container: the bridge restarts it (≤3x),
       then exits so s6 restarts the add-on.
 
-## 8. Security posture
+## 9. Security posture
 
 - [ ] No secret in the logs after a full run with `log_level: trace`.
 - [ ] `pairing.secret`, MQTT password are never echoed.
@@ -96,7 +132,7 @@ Tested device / model: ____________________   Date: __________
       cycle. If DENIED lines appear, the profile in `apparmor.txt` needs the
       corresponding rule (see the comment block at the top of that file).
 
-## 9. Shutdown
+## 10. Shutdown
 
 - [ ] Stopping the add-on from HA sends SIGTERM, the add-on exits cleanly
       within `timeout` (30s).
@@ -104,7 +140,7 @@ Tested device / model: ____________________   Date: __________
       `avahi-browse -art | grep -i eebus`).
 - [ ] MQTT LWT publishes `offline` (if configured).
 
-## 10. Image signing (release only)
+## 11. Image signing (release only)
 
 - [ ] `cosign verify ghcr.io/tbazire/eebus-bridge-dev:<version>` succeeds.
 

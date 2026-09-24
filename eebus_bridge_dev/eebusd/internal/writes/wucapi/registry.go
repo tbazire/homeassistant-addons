@@ -30,12 +30,16 @@ import (
 // it (e.g. ohpcf.schedule takes a start delay in seconds); others ignore it.
 type Args struct {
 	// Value is the numeric payload (if any), e.g. a delay in seconds, a power
-	// limit in watts, a current in amperes. The use case is responsible for
-	// interpreting it.
+	// limit in watts, a current in amperes, a temperature setpoint in °C. The
+	// use case is responsible for interpreting it.
 	Value float64
-	// Unit documents what Value means ("seconds", "W", "A", …). The use case
-	// may ignore it if the action's unit is fixed.
+	// Unit documents what Value means ("seconds", "W", "A", "°C", …). The use
+	// case may ignore it if the action's unit is fixed.
 	Unit string
+	// Text is the string payload (if any), e.g. an operation mode ("on",
+	// "off", "eco", "auto") for select/switch components. Empty for numeric
+	// commands. The use case validates it against the device's capabilities.
+	Text string
 }
 
 // NumberRange describes the valid input range for a number-like control entity

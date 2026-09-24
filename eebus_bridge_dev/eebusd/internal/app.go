@@ -155,8 +155,15 @@ func (a *App) Setup() error {
 		return fmt.Errorf("no local CEM entity found after setup")
 	}
 
-	// 7. Typed read-only use cases (MGCP, MPC, VABD, VAPD).
-	if _, err := scanner.RegisterUseCases(a.service, localEntity); err != nil {
+	// 7. Typed read-only use cases (MGCP, MPC, VABD, VAPD; plus the five HVAC
+	//    read use cases MDT/MDSF/MOT/MRT/MRHSF when -write-hvac-enabled is set).
+	//    HVAC read values are forwarded through the Signal sink as uc_signal
+	//    lines so the bridge can expose semantic sensors (water heater current
+	//    temperature, room mode, …) next to the generic measurement sensors.
+	if _, err := scanner.RegisterUseCases(a.service, localEntity, scanner.RegisterOptions{
+		HVAC:   a.cfg.HVACUseCasesActive(),
+		Signal: a.onReadUseCaseSignal,
+	}); err != nil {
 		return fmt.Errorf("register use cases: %w", err)
 	}
 
@@ -321,6 +328,23 @@ func maskSKI(ski string) string {
 		return "…"
 	}
 	return "…" + ski[len(ski)-8:]
+}
+
+// onReadUseCaseSignal is the sink wired into scanner.RegisterUseCases for the
+// HVAC read use cases. It mirrors the write-side path: a "uc_signal" NDJSON
+// line in -json mode, a log line otherwise. The signals are read-only values —
+// they create sensors, never command topics.
+func (a *App) onReadUseCaseSignal(ski string, entity spineapi.EntityRemoteInterface, usecase, signal, value, valueType, unit string) {
+	if entity == nil || value == "" {
+		return
+	}
+	addr := entityAddrString(entity)
+	if a.cfg.JSONOut {
+		a.emitSignal(ski, addr, usecase, signal, value, valueType, unit)
+		return
+	}
+	AppLog.Infof("uc_signal: ski=%s entity=%s usecase=%s signal=%s value=%s",
+		maskSKI(ski), addr, usecase, signal, value)
 }
 
 // onWriteUseCaseEvent is the shared callback wired into every write use case.

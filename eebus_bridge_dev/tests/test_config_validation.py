@@ -161,6 +161,24 @@ def main() -> int:
               "mqtt.ssl schema is bool "
               f"(got {mqtt_schema.get('ssl')!r})")
 
+    # --- Write toggles (HVAC, issue: write.hvac_enabled) -----------------------------
+    # Every per-use-case write toggle must exist in BOTH options and schema,
+    # defaulting to false (opt-in). A missing schema entry would make HA
+    # silently drop the user's hvac_enabled=true — the same class of regression
+    # as issue #40 for the mqtt.* fields.
+    print("Write toggles:")
+    write_options = (options.get("write") or {}) if isinstance(options, dict) else {}
+    write_schema = (schema.get("write") or {}) if isinstance(schema, dict) else {}
+    if isinstance(write_options, dict) and isinstance(write_schema, dict):
+        for toggle in ("lpc_enabled", "ohpcf_enabled", "hvac_enabled"):
+            check(toggle in write_options,
+                  f"write.{toggle} present in options")
+            check(write_schema.get(toggle) == "bool",
+                  f"write.{toggle} schema is bool "
+                  f"(got {write_schema.get(toggle)!r})")
+            check(write_options.get(toggle) is False,
+                  f"write.{toggle} defaults to false (opt-in)")
+
     # --- License file ---------------------------------------------------------------
     print("License:")
     check(LICENSE_PATH.is_file(), f"LICENSE exists at repo root")
