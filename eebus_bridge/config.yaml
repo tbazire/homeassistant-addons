@@ -22,7 +22,7 @@
 #   https://developers.home-assistant.io/docs/add-ons/configuration
 
 name: EEBUS Bridge
-version: "0.3.0"
+version: "0.4.0"
 slug: eebus_bridge
 description: >-
   Generic EEBUS bridge. Pairs with any EEBUS device on the local network
@@ -75,6 +75,7 @@ options:
     lpc_max_limit_w: 0
     lpc_enabled: false
     ohpcf_enabled: false
+    hvac_enabled: false
 schema:
   log_level: list(trace|debug|info|warning|error)
   poll_interval: int(1,86400)?
@@ -103,3 +104,4 @@ schema:
     lpc_max_limit_w: int(0,1000000)?
     lpc_enabled: bool
     ohpcf_enabled: bool
+    hvac_enabled: bool

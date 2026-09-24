@@ -71,7 +71,7 @@ type HANumber struct {
 }
 
 // HASwitch is the discovery payload for a switch entity (binary on/off).
-// Reserved for future write use cases.
+// Used for HVAC operation modes when the supported set is exactly on/off.
 type HASwitch struct {
 	Name         string    `json:"name"`
 	UniqueID     string    `json:"unique_id"`
@@ -83,7 +83,8 @@ type HASwitch struct {
 }
 
 // HASelect is the discovery payload for a select entity (enum).
-// Reserved for future write use cases.
+// Used by the HVAC write use cases to expose an operation mode (auto/on/off/
+// eco) as a selectable option list.
 type HASelect struct {
 	Name         string    `json:"name"`
 	UniqueID     string    `json:"unique_id"`
@@ -91,6 +92,27 @@ type HASelect struct {
 	StateTopic   string    `json:"state_topic"`
 	Options      []string  `json:"options"`
 	Device       *HADevice `json:"device,omitempty"`
+}
+
+// HAWaterHeater is the discovery payload for a water_heater entity — the
+// composed view of a DHWCircuit's HVAC use cases: the current temperature
+// comes from the mdt read signal, the target temperature from the cdt number,
+// the operation mode from the cdsf select. Field names follow the HA MQTT
+// water_heater schema (temperature_*, not target_*).
+type HAWaterHeater struct {
+	Name                    string    `json:"name"`
+	UniqueID                string    `json:"unique_id"`
+	CurrentTemperatureTopic string    `json:"current_temperature_topic,omitempty"`
+	TemperatureCommandTopic string    `json:"temperature_command_topic,omitempty"`
+	TemperatureStateTopic   string    `json:"temperature_state_topic,omitempty"`
+	ModeCommandTopic        string    `json:"mode_command_topic,omitempty"`
+	ModeStateTopic          string    `json:"mode_state_topic,omitempty"`
+	Modes                   []string  `json:"modes,omitempty"`
+	MinTemp                 *float64  `json:"min_temp,omitempty"`
+	MaxTemp                 *float64  `json:"max_temp,omitempty"`
+	Precision               *float64  `json:"precision,omitempty"`
+	TemperatureUnit         string    `json:"temperature_unit,omitempty"`
+	Device                  *HADevice `json:"device,omitempty"`
 }
 
 // HABinarySensor is the discovery payload for a binary_sensor entity (on/off).
@@ -135,15 +157,21 @@ type Mapper struct {
 
 	devices   map[string]*HADevice // ski -> device block
 	announced map[string]bool      // unique_id already published
+
+	// waterHeaters accumulates the cdt/cdsf contributions per DHWCircuit
+	// entity (key "<ski>|<entity>") so the composite water_heater config can
+	// be rebuilt and re-published as each use case announces itself.
+	waterHeaters map[string]*waterHeaterState
 }
 
 // NewMapper returns a Mapper using the given MQTT prefixes.
 func NewMapper(statePrefix, discoveryPrefix string) *Mapper {
 	return &Mapper{
-		prefix:    strings.Trim(statePrefix, "/"),
-		discovery: strings.Trim(discoveryPrefix, "/"),
-		devices:   make(map[string]*HADevice),
-		announced: make(map[string]bool),
+		prefix:       strings.Trim(statePrefix, "/"),
+		discovery:    strings.Trim(discoveryPrefix, "/"),
+		devices:      make(map[string]*HADevice),
+		announced:    make(map[string]bool),
+		waterHeaters: make(map[string]*waterHeaterState),
 	}
 }
 
@@ -228,20 +256,35 @@ func (m *Mapper) OnMeasurement(me *Measurement) Discovery {
 // OnControllable maps a "controllable" event into one or more Discovery
 // descriptors for the matching HA control entity/entities. The entity type is
 // chosen by the use case itself (carried in c.Component), so the bridge stays
-// generic: when a new use case ships (LPC → number, OHPCF → buttons, …) this
-// method picks it up without changes as long as the component is one we model.
+// generic: when a new use case ships (LPC → number, OHPCF → buttons, HVAC →
+// select, …) this method picks it up without changes as long as the component
+// is one we model.
 //
 // Returns a slice because some components expand to multiple HA entities:
 // "buttons" yields one HA button per action (OHPCF → schedule/pause/resume/
-// abort). "number" and the default path yield exactly one descriptor. The
-// orchestrator loops over the slice and publishes/subscribes each.
+// abort). "number", "select" and the default path yield exactly one
+// descriptor. The orchestrator loops over the slice and publishes/subscribes
+// each.
+//
+// DHW circuits are special-cased by ENTITY TYPE (not by brand/model): the cdt
+// (target temperature) and cdsf (operation mode) controllables of a
+// DHWCircuit are composed into a single water_heater entity instead of a bare
+// number + select. Each contribution re-publishes the composite config, so
+// the entity gains capabilities as the use cases announce themselves.
 //
 // Already-announced entities return a state-only refresh (or, for buttons,
-// nothing at all — buttons carry no state, so a refresh is a no-op). On first
-// sight each descriptor carries its Config (for discovery publish) plus its
-// CommandTopics (for subscription).
+// nothing at all — buttons carry no state). On first sight each descriptor
+// carries its Config (for discovery publish) plus its CommandTopics (for
+// subscription).
 func (m *Mapper) OnControllable(c *Controllable) []Discovery {
 	uid := uniqueID(c.SKI, c.Entity, c.UseCase)
+
+	// DHW water heater composition (by entity type): divert before the
+	// announced check — the composite config is re-published on every
+	// contribution so its topic list grows as use cases announce themselves.
+	if isDHWWaterHeaterPart(c) {
+		return m.composeWaterHeater(c)
+	}
 
 	// Already announced: refresh the state only (no discovery re-publish).
 	// Buttons have no state to refresh — the process state lives in a separate
@@ -254,6 +297,11 @@ func (m *Mapper) OnControllable(c *Controllable) []Discovery {
 			// watts limit). On refresh, c.State is that value as formatted by
 			// eebusd (or "" when no limit is active).
 			disc.StateTopic = fmt.Sprintf("%s/%s/%s/%s/value/state", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
+			disc.StateValue = c.State
+		case "select":
+			// A select refreshes its state topic with the current option
+			// (e.g. the HVAC operation mode reported by eebusd).
+			disc.StateTopic = fmt.Sprintf("%s/%s/%s/%s/mode/state", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
 			disc.StateValue = c.State
 		}
 		// No state to refresh (e.g. buttons, or empty state) → nothing to do.
@@ -305,10 +353,11 @@ func (m *Mapper) OnControllable(c *Controllable) []Discovery {
 		return out
 
 	case "number":
-		// A numeric setpoint (e.g. LPC power limit). The unit is declared by
-		// the use case (carried in c.Unit). A single value topic carries the
-		// current limit and receives user input; the orchestrator's
-		// decodeHACommand routes "/value/cmd" payloads to <uc>.set.
+		// A numeric setpoint (e.g. LPC power limit, HVAC room target
+		// temperature). The unit is declared by the use case (carried in
+		// c.Unit). A single value topic carries the current value and receives
+		// user input; the orchestrator's decodeHACommand routes "/value/cmd"
+		// payloads to <uc>.set.
 		//
 		// The optional min/max/step come from c.Range. When the device
 		// advertised a ceiling (Range.Max != nil) the HA slider is bounded to
@@ -339,12 +388,199 @@ func (m *Mapper) OnControllable(c *Controllable) []Discovery {
 			CommandTopics: []string{valueCmd},
 		}}
 
+	case "select":
+		// An enum setpoint (e.g. an HVAC operation mode). The options are the
+		// use case's advertised actions; choosing one publishes the option
+		// string on .../mode/cmd, which decodeHACommand routes to <uc>.set
+		// with the option as the text payload.
+		//
+		// Switch optimization: when the supported options are exactly on/off,
+		// a switch is rendered instead of a two-option select — the familiar
+		// on/off toggle. The payloads match the option strings, so the same
+		// command routing applies.
+		modeCmd := fmt.Sprintf("%s/%s/%s/%s/mode/cmd", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
+		modeState := fmt.Sprintf("%s/%s/%s/%s/mode/state", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
+		if isOnOffOnly(c.Actions) {
+			m.announced[uid] = true
+			return []Discovery{{
+				ConfigTopic: fmt.Sprintf("%s/switch/eebus_bridge/%s/config", m.discovery, uid),
+				Config: &HASwitch{
+					Name:         modeControlName(c),
+					UniqueID:     uid,
+					CommandTopic: modeCmd,
+					StateTopic:   modeState,
+					PayloadOn:    "on",
+					PayloadOff:   "off",
+					Device:       dev,
+				},
+				StateTopic:    modeState,
+				StateValue:    c.State,
+				CommandTopics: []string{modeCmd},
+			}}
+		}
+		m.announced[uid] = true
+		return []Discovery{{
+			ConfigTopic: fmt.Sprintf("%s/select/eebus_bridge/%s/config", m.discovery, uid),
+			Config: &HASelect{
+				Name:         modeControlName(c),
+				UniqueID:     uid,
+				CommandTopic: modeCmd,
+				StateTopic:   modeState,
+				Options:      c.Actions,
+				Device:       dev,
+			},
+			StateTopic:    modeState,
+			StateValue:    c.State,
+			CommandTopics: []string{modeCmd},
+		}}
+
 	default:
 		// Unknown component: return nothing so the orchestrator skips
-		// publishing. New components (switch/select) will be wired here as
-		// their use cases ship.
+		// publishing. New components will be wired here as their use cases
+		// ship.
 		return nil
 	}
+}
+
+// ---- DHW water heater composition -------------------------------------------
+
+// DHW-related entity type and use case identifiers as emitted by eebusd
+// (SPINE enum names). The mapping is by entity TYPE and standard EEBUS use
+// case — never by brand, model or SKI.
+const (
+	entityTypeDHWCircuit = "DHWCircuit"
+	useCaseCDT           = "cdt"  // Configuration of DHW Temperature (write)
+	useCaseCDSF          = "cdsf" // Configuration of DHW System Function (write)
+	useCaseMDT           = "mdt"  // Monitoring of DHW Temperature (read)
+	useCaseMDSF          = "mdsf" // Monitoring of DHW System Function (read)
+)
+
+// isDHWWaterHeaterPart reports whether a controllable contributes to the
+// composed water_heater of a DHWCircuit: the cdt number (target temperature)
+// or the cdsf select (operation mode).
+func isDHWWaterHeaterPart(c *Controllable) bool {
+	return c.EntityType == entityTypeDHWCircuit &&
+		(c.UseCase == useCaseCDT || c.UseCase == useCaseCDSF)
+}
+
+// waterHeaterState accumulates the contributions of the cdt and cdsf
+// controllables (and the read-side topics they reference) for one DHWCircuit.
+// The composite config is rebuilt and re-published on every contribution.
+type waterHeaterState struct {
+	modes     []string // cdsf select options (operation modes)
+	modeCmd   string   // cdsf mode command topic
+	tempCmd   string   // cdt value command topic
+	tempState string   // cdt value state topic
+	tempValue string   // last known target temperature (formatted)
+	min, max  *float64
+	step      *float64
+}
+
+// composeWaterHeater folds one cdt/cdsf controllable into the water_heater
+// entity of its DHWCircuit and returns the (re-published) discovery
+// descriptor. The descriptor's CommandTopics carry only the contributing use
+// case's topic, so the orchestrator binds the topic to the right Controllable
+// context (op prefix) when subscribing.
+func (m *Mapper) composeWaterHeater(c *Controllable) []Discovery {
+	key := c.SKI + "|" + c.Entity
+	st := m.waterHeaters[key]
+	if st == nil {
+		st = &waterHeaterState{}
+		m.waterHeaters[key] = st
+	}
+
+	var cmdTopics []string
+	switch c.UseCase {
+	case useCaseCDT:
+		st.tempCmd = fmt.Sprintf("%s/%s/%s/%s/value/cmd", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
+		st.tempState = fmt.Sprintf("%s/%s/%s/%s/value/state", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
+		st.tempValue = c.State
+		if c.Range != nil {
+			min, max, step := c.Range.Min, c.Range.Max, c.Range.Step
+			st.min, st.max, st.step = &min, max, &step
+		}
+		cmdTopics = []string{st.tempCmd}
+	case useCaseCDSF:
+		st.modeCmd = fmt.Sprintf("%s/%s/%s/%s/mode/cmd", m.prefix, c.SKI, entitySafe(c.Entity), c.UseCase)
+		if len(c.Actions) > 0 {
+			st.modes = c.Actions
+		}
+		cmdTopics = []string{st.modeCmd}
+	}
+
+	dev := m.devices[c.SKI]
+	if dev == nil {
+		dev = &HADevice{
+			Identifiers: []string{c.SKI},
+			Name:        defaultDeviceName(c.SKI),
+		}
+		m.devices[c.SKI] = dev
+	}
+
+	uid := uniqueID(c.SKI, c.Entity, "water_heater")
+	wh := &HAWaterHeater{
+		Name:                    waterHeaterName(c),
+		UniqueID:                uid,
+		CurrentTemperatureTopic: m.ucSignalTopic(c.SKI, c.Entity, useCaseMDT, "temperature"),
+		TemperatureCommandTopic: st.tempCmd,
+		TemperatureStateTopic:   st.tempState,
+		ModeCommandTopic:        st.modeCmd,
+		// The mode state is the mdsf read signal (the monitored current DHW
+		// operation mode), not a write-side topic.
+		ModeStateTopic:  m.ucSignalTopic(c.SKI, c.Entity, useCaseMDSF, "operation_mode"),
+		Modes:           st.modes,
+		MinTemp:         st.min,
+		MaxTemp:         st.max,
+		Precision:       st.step,
+		TemperatureUnit: "C",
+		Device:          dev,
+	}
+	return []Discovery{{
+		ConfigTopic:   fmt.Sprintf("%s/water_heater/eebus_bridge/%s/config", m.discovery, uid),
+		Config:        wh,
+		StateTopic:    st.tempState,
+		StateValue:    st.tempValue,
+		CommandTopics: cmdTopics,
+	}}
+}
+
+// ucSignalTopic builds the state topic of one use-case read signal — the same
+// construction OnUcSignal uses, so the water_heater config can reference the
+// mdt/mdsf signal topics directly (they are fed by the daemon's uc_signal
+// lines, independent of arrival order).
+func (m *Mapper) ucSignalTopic(ski, entity, useCase, signal string) string {
+	return fmt.Sprintf("%s/%s/%s/%s/%s/state", m.prefix, ski, entitySafe(entity), useCase, signal)
+}
+
+// waterHeaterName builds the entity name of the composed DHW water heater.
+func waterHeaterName(c *Controllable) string {
+	if c.Entity != "" && c.Entity != "0" {
+		return fmt.Sprintf("EEBUS DHW water heater (entity %s)", c.Entity)
+	}
+	return "EEBUS DHW water heater"
+}
+
+// isOnOffOnly reports whether the option list is exactly on/off (a binary
+// toggle renders better as a switch than as a two-option select).
+func isOnOffOnly(actions []string) bool {
+	if len(actions) != 2 {
+		return false
+	}
+	set := map[string]bool{}
+	for _, a := range actions {
+		set[a] = true
+	}
+	return set["on"] && set["off"]
+}
+
+// modeControlName builds a human-readable name for a mode control (select or
+// switch): "EEBUS <EntityType> mode".
+func modeControlName(c *Controllable) string {
+	entityPart := c.EntityType
+	if entityPart == "" {
+		entityPart = c.UseCase
+	}
+	return fmt.Sprintf("EEBUS %s mode", entityPart)
 }
 
 // buttonName builds a human-readable name for one action button. It leads with
@@ -628,7 +864,7 @@ func deviceClassFor(typ, unit string) string {
 		return "voltage"
 	case u == "HZ":
 		return "frequency"
-	case u == "C":
+	case u == "C" || u == "°C":
 		return "temperature"
 	case t == "TEMPERATURE":
 		return "temperature"

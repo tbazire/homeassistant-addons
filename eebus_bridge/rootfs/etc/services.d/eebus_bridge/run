@@ -110,13 +110,15 @@ main() {
         # explicitly opts in per use case.
         export EEBUS_WRITE_LPC_ENABLED="$(bashio::config 'write.lpc_enabled')"
         export EEBUS_WRITE_OHPCF_ENABLED="$(bashio::config 'write.ohpcf_enabled')"
-        bashio::log.warning "write commands ENABLED — the add-on can now control the device (profile=$(bashio::config 'write.device_profile'), use_cases=$(bashio::config 'write.use_cases'), lpc=$(bashio::config 'write.lpc_enabled'), ohpcf=$(bashio::config 'write.ohpcf_enabled'))"
+        export EEBUS_WRITE_HVAC_ENABLED="$(bashio::config 'write.hvac_enabled')"
+        bashio::log.warning "write commands ENABLED — the add-on can now control the device (profile=$(bashio::config 'write.device_profile'), use_cases=$(bashio::config 'write.use_cases'), lpc=$(bashio::config 'write.lpc_enabled'), ohpcf=$(bashio::config 'write.ohpcf_enabled'), hvac=$(bashio::config 'write.hvac_enabled'))"
     else
         export EEBUS_WRITE_ENABLE="false"
         export EEBUS_WRITE_USE_CASES="auto"
         export EEBUS_WRITE_DEVICE_PROFILE="auto"
         export EEBUS_WRITE_LPC_ENABLED="false"
         export EEBUS_WRITE_OHPCF_ENABLED="false"
+        export EEBUS_WRITE_HVAC_ENABLED="false"
     fi
 
     # 4. Exec the bridge. s6-overlay now supervises it; SIGTERM propagates.

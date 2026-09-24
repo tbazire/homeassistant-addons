@@ -19,12 +19,12 @@ const (
 
 type OptionalPowerConsumptionInfo struct {
 	PowerSequenceId model.PowerSequenceIdType
-	Power 			*float64
-	MaxPower 		*float64
-	State 			model.PowerSequenceStateType
-	IsPausable 		bool
-	IsStoppable 	bool
-	StartTime 		*time.Time
+	Power           *float64
+	MaxPower        *float64
+	State           model.PowerSequenceStateType
+	IsPausable      bool
+	IsStoppable     bool
+	StartTime       *time.Time
 }
 
 // manufacturer data type
@@ -193,4 +193,90 @@ type PendingDeviceConfiguration struct {
 	KeyName           model.DeviceConfigurationKeyNameType                 `json:"keyName"`
 	Value             *model.DeviceConfigurationKeyValueValueType          `json:"value,omitempty"`
 	IsValueChangeable *bool                                                `json:"isValueChangeable,omitempty"`
+}
+
+// operation mode of an HVAC system function
+type HvacOperationModeType string
+
+const (
+	HvacOperationModeTypeAuto HvacOperationModeType = "auto"
+	HvacOperationModeTypeOn   HvacOperationModeType = "on"
+	HvacOperationModeTypeOff  HvacOperationModeType = "off"
+	HvacOperationModeTypeEco  HvacOperationModeType = "eco"
+)
+
+// DHWSystemFunctionWriteCapabilities describes the currently usable CDSF
+// writes for a DHW circuit. A capability is true only when the corresponding
+// use-case scenario, remote write operation and changeability metadata permit
+// the write.
+type DHWSystemFunctionWriteCapabilities struct {
+	OperationMode   bool
+	StartOneTimeDhw bool
+	StopOneTimeDhw  bool
+}
+
+// HVAC temperature setpoint, e.g. for a room or domestic hot water
+type Setpoint struct {
+	// the setpoint identifier
+	Id uint
+
+	// the setpoint temperature value
+	Value float64
+
+	// the minimum allowed temperature value
+	MinValue float64
+
+	// the maximum allowed temperature value
+	MaxValue float64
+
+	// whether the setpoint is currently active
+	IsActive bool
+
+	// whether the setpoint may be changed by a client
+	IsChangeable bool
+}
+
+// constraints for an HVAC temperature setpoint
+type SetpointConstraints struct {
+	// the setpoint identifier
+	Id uint
+
+	// the minimum allowed temperature value
+	MinValue float64
+
+	// the maximum allowed temperature value
+	MaxValue float64
+
+	// the step size for temperature value changes
+	StepSize float64
+}
+
+// RoomHeatingSetpointState is the complete state of the single room-air
+// temperature setpoint selected by CRHT. State() only returns this value when
+// every numeric field is present and valid, so an omitted remote field is
+// never collapsed into a protocol-significant zero.
+type RoomHeatingSetpointState struct {
+	// the setpoint identifier
+	Id uint
+
+	// the current setpoint temperature value
+	Value float64
+
+	// the minimum allowed temperature value
+	MinValue float64
+
+	// the maximum allowed temperature value
+	MaxValue float64
+
+	// the allowed temperature step size
+	StepSize float64
+
+	// whether the setpoint is currently active; an omitted flag means active
+	IsActive bool
+
+	// whether the setpoint may be changed; an omitted flag means changeable
+	IsChangeable bool
+
+	// whether the remote feature advertises SetpointListData writes
+	IsWritable bool
 }

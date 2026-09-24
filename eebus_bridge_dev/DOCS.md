@@ -187,9 +187,11 @@ case has its own toggle (`write.lpc_enabled`, `write.ohpcf_enabled`, and
 `write.hvac_enabled` for the whole HVAC set), and all default to `false`. A use case is bound, announced to the device, and exposed
 in Home Assistant **only** when its toggle is `true`.
 
-This is deliberate: the two shipped use cases control different physical
-quantities (a power limit vs. a heat-pump compressor), and a user who only
-wants one should not have the other silently exposed. A disabled use case
+| **LPC** | Limitation of Power Consumption | Any controllable system exposing `LoadControl` (heat pumps, wallboxes, inverters, batteries, sub-meters) | `number` | power limit in W (set / clear) |
+| **CDT** | Configuration of DHW Temperature | DHW circuits (heat pumps, boilers) | composes the `water_heater` | target temperature (°C) |
+| **CDSF** | Configuration of DHW System Function | DHW circuits | composes the `water_heater` | operation mode (auto/on/off/eco) |
+| **CRHT** | Configuration of Room Heating Temperature | HVAC rooms | `number` | room setpoint (°C) |
+| **CRHSF** | Configuration of Room Heating System Function | HVAC rooms | `select` (or `switch` when only on/off) | heating mode (auto/on/off/eco) | A disabled use case
 leaves no trace — no HA entity, no command topic, no sensor — because the
 daemon skips it before it can subscribe to any SPINE event.
 

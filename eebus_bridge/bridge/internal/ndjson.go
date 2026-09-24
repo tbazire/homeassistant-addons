@@ -147,6 +147,8 @@ type CommandResult struct {
 // Command is an OUTBOUND line (bridge → eebusd stdin) requesting a write
 // operation. It is NOT part of the parser's Event union — it is serialized by
 // the bridge when an HA command is received, and written to eebusd's stdin.
+// Value carries numeric payloads (watts, °C, …); Text carries string payloads
+// (an operation mode for select/switch entities).
 type Command struct {
 	Kind   string  `json:"kind"` // always "command"
 	Op     string  `json:"op"`   // "<uc>.<action>"
@@ -154,6 +156,7 @@ type Command struct {
 	Entity string  `json:"entity"`
 	Value  float64 `json:"value,omitempty"`
 	Unit   string  `json:"unit,omitempty"`
+	Text   string  `json:"text,omitempty"`
 }
 
 // UcSignal is an INBOUND line (eebusd → bridge) carrying one read-signal value

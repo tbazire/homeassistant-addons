@@ -57,7 +57,8 @@ func NewDispatcher(resolver EntityResolver, out io.Writer) *Dispatcher {
 }
 
 // CommandIn mirrors the bridge → eebusd wire contract. The Value/Unit pair is
-// optional and only meaningful for some actions (e.g. ohpcf.schedule).
+// optional and only meaningful for some actions (e.g. ohpcf.schedule); Text
+// carries string payloads (operation modes for select/switch entities).
 type CommandIn struct {
 	Kind   string  `json:"kind"`           // always "command"
 	Op     string  `json:"op"`             // "<uc>.<action>"
@@ -65,6 +66,7 @@ type CommandIn struct {
 	Entity string  `json:"entity"`         // entity address, e.g. "3.1"
 	Value  float64 `json:"value"`          // optional numeric payload
 	Unit   string  `json:"unit,omitempty"` // optional unit hint
+	Text   string  `json:"text,omitempty"` // optional string payload (mode, …)
 }
 
 // CommandResult is the eebusd → bridge outcome line. msgCounter is present on
@@ -140,7 +142,7 @@ func (d *Dispatcher) dispatch(cmd CommandIn) error {
 	// 4. Dispatch. The use case is responsible for invoking resultCB exactly
 	//    once, from any goroutine, with the SPINE result. We wrap it to emit
 	//    the command_result line.
-	args := wucapi.Args{Value: cmd.Value, Unit: cmd.Unit}
+	args := wucapi.Args{Value: cmd.Value, Unit: cmd.Unit, Text: cmd.Text}
 	resultCB := func(status wucapi.ResultStatus, msgCounter *uint32, errStr string) {
 		d.emitResult(cmd, status, msgCounter, errStr)
 	}

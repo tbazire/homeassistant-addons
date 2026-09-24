@@ -103,6 +103,42 @@ func TestUseCaseEnabled(t *testing.T) {
 			uc:   "",
 			want: false,
 		},
+		{
+			name: "hvac use cases off when flag false",
+			cfg:  &Config{HVACEnabled: false, LPCEnabled: true, OHPCFEnabled: true},
+			uc:   "cdt",
+			want: false,
+		},
+		{
+			name: "hvac cdt on when flag true",
+			cfg:  &Config{HVACEnabled: true},
+			uc:   "cdt",
+			want: true,
+		},
+		{
+			name: "hvac cdsf on when flag true",
+			cfg:  &Config{HVACEnabled: true},
+			uc:   "cdsf",
+			want: true,
+		},
+		{
+			name: "hvac crht on when flag true",
+			cfg:  &Config{HVACEnabled: true},
+			uc:   "crht",
+			want: true,
+		},
+		{
+			name: "hvac crhsf on when flag true",
+			cfg:  &Config{HVACEnabled: true},
+			uc:   "crhsf",
+			want: true,
+		},
+		{
+			name: "hvac flag does not leak into other names",
+			cfg:  &Config{HVACEnabled: true, LPCEnabled: false, OHPCFEnabled: false},
+			uc:   "lpc",
+			want: false,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

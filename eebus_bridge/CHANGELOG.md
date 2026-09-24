@@ -10,6 +10,67 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [0.4.0] - 2026-09-24
+
+Migration of the dev channel (validated up to `0.10.0-dev` on a real device)
+to the production add-on. Adds the nine EEBUS HVAC use cases (domestic hot
+water + room heating), read and write, grafted from the
+[volschin/eebus-go](https://github.com/volschin/eebus-go) fork (same spine-go/
+ship-go pins as our vendored tree, so the graft stays confined to `eebus-go`).
+Everything HVAC is off by default behind `write.hvac_enabled`.
+
+### Added
+
+- **HVAC read use cases** (opt-in via `write.hvac_enabled`, see below):
+  `ma/mdt` (DHW temperature), `ma/mdsf` (DHW operation mode + one-time overrun
+  state), `ma/mot` (outdoor temperature), `ma/mrt` (room temperature) and
+  `ma/mrhsf` (heating operation mode). Their values surface as semantic
+  sensors through the existing `uc_signal` plumbing, next to the generic
+  measurement sensors (which remain the fallback surface).
+- **HVAC write use cases**: `ca/cdt` (DHW target temperature), `ca/cdsf` (DHW
+  operation mode), `ca/crht` (room heating setpoint) and `ca/crhsf` (heating
+  mode). Each is a self-contained `writes/hvac` module following the OHPCF/LPC
+  pattern; the dispatcher re-validates the remote's use-case announcement
+  before every write.
+- **`water_heater` entity for DHW circuits.** The bridge composes the CDT
+  target temperature, the CDSF operation mode and the MDT/MDSF read signals
+  of a `DHWCircuit` entity into a single Home Assistant `water_heater`
+  (current temperature, target temperature with the device-advertised
+  min/max/precision, operation modes). Composition is keyed on the SPINE
+  entity type — no brand, model or SKI logic anywhere.
+- **Climate-style controls for HVAC rooms.** A `select` for the heating mode
+  (auto/on/off/eco — rendered as a `switch` when the supported set is exactly
+  on/off) and a `number` for the room setpoint, plus the semantic temperature
+  sensors. A full `climate` entity is deliberately not synthesized: the
+  select/number decomposition maps 1:1 onto the SPINE model.
+- **New option `write.hvac_enabled`** (default `false`). Gates the whole HVAC
+  set — the four write use cases AND the five read use cases — so the entity
+  surface only changes when the user opts in. With the toggle off (or
+  `write.enable` off) nothing HVAC registers: no entity, no topic, no
+  announcement.
+- **Command wire `text` payload.** The NDJSON `command` line gains an optional
+  `text` field carrying string payloads (operation modes) alongside the
+  numeric `value`; the bridge routes HA `…/mode/cmd` topics to `<uc>.set`.
+
+### Changed
+
+- Vendored `eebus-go`: merged the fork's upstream fixes — the client (EG)
+  side now ignores the remote's `UseCaseAvailable=false` flag per
+  SPINE-TS-UCD-01 (TC_SPINE_RTC_003), and the GCP MGCP use case matches
+  `MonitoringAppliance` actor types. Our local `GetRawData` measurement
+  extension is preserved. Tests: 35 packages green.
+
+### Notes
+
+- HVAC sensor coverage varies per vendor: which measurement descriptions a
+  device announces (e.g. flow/return temperature scopes) determines which
+  semantic sensors appear. Run with `log_level: debug` and check the
+  `desc id=… type=… scope=…` inventory lines if a sensor you expect is
+  missing.
+- The one-time DHW overrun controls (CDSF scenarios 2/3) are exposed
+  read-only for now (sensor via MDSF); start/stop controls may follow after
+  user feedback.
+
 ## [0.3.0] - 2026-08-29
 
 Migration of the dev channel (validated up to `0.9.0-dev` on a real device)

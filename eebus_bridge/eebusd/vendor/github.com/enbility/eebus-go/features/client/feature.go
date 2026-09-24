@@ -25,6 +25,39 @@ type Feature struct {
 	remoteEntity spineapi.EntityRemoteInterface
 }
 
+// prepareListWrite applies the remote write capabilities to a list update.
+// For non-partial writes it merges the update into the cached list without
+// persisting the speculative value locally. A failed merge must abort the
+// write: sending the caller's partial input as an unfiltered replacement could
+// otherwise remove unrelated remote entries.
+func prepareListWrite[T any](
+	featureRemote spineapi.FeatureRemoteInterface,
+	function model.FunctionType,
+	updateData any,
+	data []T,
+) ([]T, []model.FilterType, error) {
+	if featureRemote == nil {
+		return nil, nil, api.ErrDataNotAvailable
+	}
+	operation := featureRemote.Operations()[function]
+	if operation == nil || !operation.Write() {
+		return nil, nil, api.ErrNotSupported
+	}
+	if operation.WritePartial() {
+		return data, []model.FilterType{*model.NewFilterTypePartial()}, nil
+	}
+
+	mergedData, errType := featureRemote.UpdateData(false, function, updateData, nil, nil)
+	if errType != nil {
+		return nil, nil, fmt.Errorf("%w: could not merge cached %s: %s", api.ErrDataNotAvailable, function, errType.String())
+	}
+	merged, ok := mergedData.([]T)
+	if !ok {
+		return nil, nil, fmt.Errorf("%w: unexpected merged data for %s", api.ErrDataInvalid, function)
+	}
+	return merged, nil, nil
+}
+
 var _ api.FeatureClientInterface = (*Feature)(nil)
 
 func NewFeature(
