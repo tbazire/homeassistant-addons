@@ -175,12 +175,12 @@ func TestMaskSKI(t *testing.T) {
 
 func TestReExports(t *testing.T) {
 	// All/Names/Get are thin re-exports of wucapi; make sure they return the
-	// use cases shipped in this build (ohpcf + lpc, wired via writes/bind.go's
-	// blank imports).
+	// use cases shipped in this build (ohpcf + lpc + the four HVAC ones, wired
+	// via writes/bind.go's blank imports).
 	if len(All()) == 0 {
 		t.Fatal("All() is empty — no use case registered")
 	}
-	for _, want := range []string{"ohpcf", "lpc"} {
+	for _, want := range []string{"ohpcf", "lpc", "cdt", "cdsf", "crht", "crhsf"} {
 		if Get(want) == nil {
 			t.Errorf("Get(%s) returned nil — module not registered", want)
 		}
@@ -202,6 +202,26 @@ func TestReExports(t *testing.T) {
 		if uc.HAUnit() != "W" {
 			t.Errorf("lpc.HAUnit = %q, want W", uc.HAUnit())
 		}
+	}
+	// HVAC modules: cdt/crht are temperature numbers, cdsf/crhsf are selects
+	// (rendered as a switch by the bridge when the options are exactly
+	// on/off). The DHW pair composes into the water_heater entity.
+	for name, wantComponent := range map[string]string{
+		"cdt": "number", "crht": "number", "cdsf": "select", "crhsf": "select",
+	} {
+		uc := Get(name)
+		if uc == nil {
+			continue
+		}
+		if uc.HAComponent() != wantComponent {
+			t.Errorf("%s.HAComponent = %q, want %s", name, uc.HAComponent(), wantComponent)
+		}
+	}
+	if uc := Get("cdt"); uc != nil && uc.HAUnit() != "°C" {
+		t.Errorf("cdt.HAUnit = %q, want °C", uc.HAUnit())
+	}
+	if uc := Get("crht"); uc != nil && uc.HAUnit() != "°C" {
+		t.Errorf("crht.HAUnit = %q, want °C", uc.HAUnit())
 	}
 }
 

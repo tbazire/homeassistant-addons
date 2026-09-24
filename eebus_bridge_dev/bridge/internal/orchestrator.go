@@ -211,7 +211,7 @@ func (o *Orchestrator) handleEvent(ev Event, mapper *Mapper, mqtt *MQTTClient, e
 // topic carrying "pause"/"resume" maps to <uc>.pause/<uc>.resume.
 func (o *Orchestrator) subscribeCommand(mqtt *MQTTClient, cmdTopic string, c *Controllable, eebusd *Subprocess) {
 	handler := func(payload string) {
-		op, value, unit, ok := decodeHACommand(cmdTopic, payload, c)
+		op, value, unit, text, ok := decodeHACommand(cmdTopic, payload, c)
 		if !ok {
 			o.logger.Warn("unhandled HA command", "topic", cmdTopic, "payload", payload)
 			return
@@ -223,6 +223,7 @@ func (o *Orchestrator) subscribeCommand(mqtt *MQTTClient, cmdTopic string, c *Co
 			Entity: c.Entity,
 			Value:  value,
 			Unit:   unit,
+			Text:   text,
 		}
 		line, err := json.Marshal(cmd)
 		if err != nil {
@@ -241,9 +242,10 @@ func (o *Orchestrator) subscribeCommand(mqtt *MQTTClient, cmdTopic string, c *Co
 	}
 }
 
-// decodeHACommand maps an HA command_topic payload into a (op, value, unit)
-// triple for the NDJSON Command wire format. Returns ok=false for payloads we
-// do not know how to translate (the orchestrator logs and drops them).
+// decodeHACommand maps an HA command_topic payload into an (op, value, unit,
+// text) quadruple for the NDJSON Command wire format. Returns ok=false for
+// payloads we do not know how to translate (the orchestrator logs and drops
+// them).
 //
 // Routing is based on the topic path:
 //   - .../btn/<action>/cmd → <uc>.<action> (button entities; payload ignored —
@@ -251,9 +253,11 @@ func (o *Orchestrator) subscribeCommand(mqtt *MQTTClient, cmdTopic string, c *Co
 //     the payload, so each button maps to exactly one op.)
 //   - .../value/cmd        → <uc>.set / <uc>.clear (number entities; payload is
 //     the numeric value, empty clears)
+//   - .../mode/cmd         → <uc>.set (select/switch entities; payload is the
+//     option string, e.g. an HVAC operation mode "on"/"off"/"eco"/"auto")
 //
 // The same decoder works for any use case regardless of component.
-func decodeHACommand(topic, payload string, c *Controllable) (op string, value float64, unit string, ok bool) {
+func decodeHACommand(topic, payload string, c *Controllable) (op string, value float64, unit, text string, ok bool) {
 	switch {
 	case isButtonCmdTopic(topic):
 		// Button: extract the action from the /btn/<action>/cmd segment. The
@@ -261,29 +265,41 @@ func decodeHACommand(topic, payload string, c *Controllable) (op string, value f
 		// intent, and the topic already names the action.
 		action := buttonActionFromTopic(topic)
 		if action == "" {
-			return "", 0, "", false
+			return "", 0, "", "", false
 		}
 		// schedule is the only OHPCF action that takes an argument (a start
 		// delay in seconds); pressing the button means "start now".
 		if action == "schedule" {
-			return c.UseCase + ".schedule", 0, "seconds", true
+			return c.UseCase + ".schedule", 0, "seconds", "", true
 		}
-		return c.UseCase + "." + action, 0, "", true
+		return c.UseCase + "." + action, 0, "", "", true
 
 	case strings.HasSuffix(topic, "/value/cmd"):
-		// Number entities carry a numeric payload (e.g. a watts limit). Parse
-		// the trimmed payload. An empty payload clears the limit.
+		// Number entities carry a numeric payload (e.g. a watts limit or a
+		// temperature setpoint). Parse the trimmed payload. An empty payload
+		// clears the limit.
 		raw := strings.TrimSpace(payload)
 		if raw == "" {
-			return c.UseCase + ".clear", 0, c.Unit, true
+			return c.UseCase + ".clear", 0, c.Unit, "", true
 		}
 		v, err := strconv.ParseFloat(raw, 64)
 		if err != nil {
-			return "", 0, "", false
+			return "", 0, "", "", false
 		}
-		return c.UseCase + ".set", v, c.Unit, true
+		return c.UseCase + ".set", v, c.Unit, "", true
+
+	case strings.HasSuffix(topic, "/mode/cmd"):
+		// Select/switch entities carry a string payload: the chosen option
+		// (an HVAC operation mode for the crhsf/cdsf use cases, the water
+		// heater mode for the composed cdt/cdsf topics). An empty payload is
+		// meaningless for a mode — drop it.
+		raw := strings.TrimSpace(payload)
+		if raw == "" {
+			return "", 0, "", "", false
+		}
+		return c.UseCase + ".set", 0, "", raw, true
 	}
-	return "", 0, "", false
+	return "", 0, "", "", false
 }
 
 // isButtonCmdTopic reports whether topic matches the button command pattern

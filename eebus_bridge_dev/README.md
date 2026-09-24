@@ -4,7 +4,7 @@
 # EEBUS Bridge (Dev)
 
 [![Channel](https://img.shields.io/badge/channel-dev-orange.svg)](./config.yaml)
-[![Version](https://img.shields.io/badge/version-0.1.0--dev-41BDF5.svg)](./config.yaml)
+[![Version](https://img.shields.io/badge/version-0.10.0--dev-41BDF5.svg)](./config.yaml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](../LICENSE)
 
 > ⚠️ **Development channel.** This add-on ships the same Go code as the
@@ -98,6 +98,7 @@ and install **EEBUS Bridge (Dev)**. Then:
 | `write.enable` | bool | `false` | **Off by default.** When `true`, allows the add-on to send control commands to the device (e.g. schedule/pause a heat-pump compressor). See [Controlling devices](#controlling-devices-write-commands) below. |
 | `write.use_cases` | string | `"auto"` | `"auto"` activates every write use case the device supports, or a comma-separated list to restrict (e.g. `"ohpcf"`). |
 | `write.device_profile` | enum | `"auto"` | Restricts write discovery to a device family (`heatpump` / `evse` / `inverter` / `battery` / `generic`). `auto` trusts the device's own advertisement. |
+| `write.hvac_enabled` | bool | `false` | Per-use-case toggle for the HVAC set (DHW circuit + HVAC room). Must be `true` for the `water_heater` entity and the climate-style room controls to appear. **Opt-in**, like `write.lpc_enabled` / `write.ohpcf_enabled`. |
 
 By default the MQTT broker is resolved automatically from the Home Assistant
 Supervisor (the Mosquitto add-on) — you do not need to configure anything.
@@ -177,10 +178,22 @@ itself* advertises over SPINE, not a hardcoded list. Two use cases are shipped:
 
 - **OHPCF** (heat-pump compressor flexibility): on a compatible heat pump
   (e.g. a Saunier Duval/Vaillant VR920 exposing the `SmartEnergyManagementPs`
-  feature), a `climate` entity appears whose modes (`off` = abort,
-  `auto` = schedule) and presets (`pause`, `resume`) map to SPINE write
-  commands. Read-only sensors (requested/max power, start time, minimal run/pause
-  durations, pausable/stoppable) are also exposed alongside it.
+  feature), one `button` per action (`schedule` / `pause` / `resume` /
+  `abort`, filtered by device capability) plus a read-only `process_state`
+  sensor and companion sensors (requested/max power, start time, minimal
+  run/pause durations, pausable/stoppable).
+- **HVAC** (domestic hot water + room heating, 0.10.0-dev): on devices
+  exposing the EEBUS HVAC features, a `water_heater` entity is composed for
+  each **DHW circuit** (current temperature, target temperature, operation
+  mode) and climate-style controls for each **HVAC room** (operation mode via
+  a `select` — rendered as a `switch` when only on/off is supported — plus the
+  target temperature as a `number`). Semantic sensors (DHW/room/outdoor
+  temperature, operation modes, one-time DHW overrun) appear alongside.
+  Activation is pure standard EEBUS negotiation: the device must announce the
+  use cases (`ma/mdt`, `ma/mdsf`, `ca/cdt`, `ca/cdsf`, …) via
+  `UseCaseSupportData`; nothing brand-, model- or SKI-specific is involved.
+  Requires `write.hvac_enabled: true` (reads and writes alike are opt-in;
+  the generic measurement sensors remain as fallback).
 - **LPC** (limitation of power consumption): on any controllable system that
   exposes the `LoadControl` feature (heat pumps, wallboxes, inverters,
   batteries, sub-meters), a `number` entity appears representing the active
@@ -193,10 +206,12 @@ itself* advertises over SPINE, not a hardcoded list. Two use cases are shipped:
 
 | Use case | Typical device | HA entity | Status |
 |----------|----------------|-----------|--------|
-| OHPCF | Heat pumps | `climate` (off/auto + pause/resume presets) | ✅ shipped |
+| OHPCF | Heat pumps | `button` ×4 + `sensor` (process_state) | ✅ shipped |
 | LPC | Heat pumps, wallboxes, controllable loads | `number` (W limit) | ✅ shipped |
+| HVAC CDT/CDSF | DHW circuits (heat pumps, boilers) | `water_heater` (composed) | 🧪 0.10.0-dev, needs field validation |
+| HVAC CRHT/CRHSF | HVAC rooms | `number` (setpoint) + `select`/`switch` (mode) | 🧪 0.10.0-dev, needs field validation |
 | LPP | Inverters | `number` (W limit) | 🚧 planned |
-| OPEV / OSCEV | Wallboxes | `number` / `climate` | 🚧 planned |
+| OPEV / OSCEV | Wallboxes | `number` / `select` | 🚧 planned |
 
 Adding a use case is a self-contained module — the bridge and dispatcher pick
 it up automatically, no code change required outside the module. See

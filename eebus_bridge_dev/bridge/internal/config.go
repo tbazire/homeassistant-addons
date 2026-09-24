@@ -62,6 +62,7 @@ type Config struct {
 	// both WriteEnable and its own toggle are true.
 	WriteLPCEnabled   bool
 	WriteOHPCFEnabled bool
+	WriteHVACEnabled  bool
 
 	// Process wiring (set by run.sh).
 	ScannerBin string // path to eebusd binary
@@ -95,6 +96,7 @@ func Load() (Config, error) {
 		WriteLPCMaxLimitW:  envInt("EEBUS_WRITE_LPC_MAX_LIMIT_W", 0),
 		WriteLPCEnabled:    envBool("EEBUS_WRITE_LPC_ENABLED", false),
 		WriteOHPCFEnabled:  envBool("EEBUS_WRITE_OHPCF_ENABLED", false),
+		WriteHVACEnabled:   envBool("EEBUS_WRITE_HVAC_ENABLED", false),
 		ScannerBin:         envDefault("EEBUS_SCANNER_BIN", "/usr/local/bin/eebusd"),
 		DataDir:            envDefault("EEBUS_DATA_DIR", "/data/eebus"),
 	}
@@ -163,6 +165,7 @@ func (c Config) Args() []string {
 		// its buttons never appeared in Home Assistant.
 		args = append(args, "-write-lpc-enabled="+strconv.FormatBool(c.WriteLPCEnabled))
 		args = append(args, "-write-ohpcf-enabled="+strconv.FormatBool(c.WriteOHPCFEnabled))
+		args = append(args, "-write-hvac-enabled="+strconv.FormatBool(c.WriteHVACEnabled))
 	}
 	return args
 }
@@ -201,6 +204,7 @@ func (c Config) Redacted() map[string]any {
 		"write_lpc_max_limit_w": c.WriteLPCMaxLimitW,
 		"write_lpc_enabled":     c.WriteLPCEnabled,
 		"write_ohpcf_enabled":   c.WriteOHPCFEnabled,
+		"write_hvac_enabled":    c.WriteHVACEnabled,
 		"scanner_bin":           c.ScannerBin,
 		"data_dir":              c.DataDir,
 	}

@@ -63,7 +63,7 @@ func NewMGCP(
 		return nil, errors.New("monitorEnergyConfig must be set")
 	}
 
-	validActorTypes := []model.UseCaseActorType{model.UseCaseActorTypeGridConnectionPoint}
+	validActorTypes := []model.UseCaseActorType{model.UseCaseActorTypeMonitoringAppliance}
 	useCaseScenarios := make([]api.UseCaseScenario, 0)
 
 	if monitorFeedInLimitationConfig != nil {

@@ -2,21 +2,63 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
 	"sync"
+	"testing"
 	"time"
 
+	eebusapi "github.com/enbility/eebus-go/api"
 	shipapi "github.com/enbility/ship-go/api"
 	spineapi "github.com/enbility/spine-go/api"
+	spinemocks "github.com/enbility/spine-go/mocks"
 	"github.com/enbility/spine-go/model"
 	"github.com/enbility/spine-go/spine"
 	"github.com/enbility/spine-go/util"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type featureFunctions struct {
 	featureType model.FeatureTypeType
 	functions   []model.FunctionType
 	partial     bool
+}
+
+func commandFromMessage(t *testing.T, message []byte) model.CmdType {
+	t.Helper()
+	require.NotEmpty(t, message)
+	var datagram model.Datagram
+	require.NoError(t, json.Unmarshal(message, &datagram))
+	require.Len(t, datagram.Datagram.Payload.Cmd, 1)
+	return datagram.Datagram.Payload.Cmd[0]
+}
+
+func TestPrepareListWriteFailsClosedWhenCacheMergeFails(t *testing.T) {
+	function := model.FunctionTypeSetpointListData
+	remote := spinemocks.NewFeatureRemoteInterface(t)
+	remote.EXPECT().Operations().Return(map[model.FunctionType]spineapi.OperationsInterface{
+		function: spine.NewOperations(true, false, true, false),
+	})
+	remote.EXPECT().UpdateData(false, function, mock.Anything, mock.Anything, mock.Anything).Return(
+		nil,
+		model.NewErrorType(model.ErrorNumberTypeCommandRejected, "cache unavailable"),
+	)
+
+	data := []model.SetpointDataType{{
+		SetpointId: util.Ptr(model.SetpointIdType(1)),
+		Value:      model.NewScaledNumberType(20),
+	}}
+	merged, filters, err := prepareListWrite[model.SetpointDataType](
+		remote,
+		function,
+		&model.SetpointListDataType{SetpointData: data},
+		data,
+	)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, eebusapi.ErrDataNotAvailable))
+	assert.Nil(t, merged)
+	assert.Nil(t, filters)
 }
 
 type WriteMessageHandler struct {

@@ -6,13 +6,22 @@ github.com/enbility/eebus-go/features/internal
 github.com/enbility/eebus-go/features/server
 github.com/enbility/eebus-go/service
 github.com/enbility/eebus-go/usecases/api
+github.com/enbility/eebus-go/usecases/ca/cdsf
+github.com/enbility/eebus-go/usecases/ca/cdt
+github.com/enbility/eebus-go/usecases/ca/crhsf
+github.com/enbility/eebus-go/usecases/ca/crht
 github.com/enbility/eebus-go/usecases/cem/ohpcf
 github.com/enbility/eebus-go/usecases/cem/vabd
 github.com/enbility/eebus-go/usecases/cem/vapd
 github.com/enbility/eebus-go/usecases/eg/lpc
 github.com/enbility/eebus-go/usecases/internal
+github.com/enbility/eebus-go/usecases/ma/mdsf
+github.com/enbility/eebus-go/usecases/ma/mdt
 github.com/enbility/eebus-go/usecases/ma/mgcp
+github.com/enbility/eebus-go/usecases/ma/mot
 github.com/enbility/eebus-go/usecases/ma/mpc
+github.com/enbility/eebus-go/usecases/ma/mrhsf
+github.com/enbility/eebus-go/usecases/ma/mrt
 github.com/enbility/eebus-go/usecases/usecase
 # github.com/enbility/go-avahi v0.0.0-20240909195612-d5de6b280d7a
 ## explicit; go 1.17
