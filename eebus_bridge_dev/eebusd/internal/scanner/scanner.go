@@ -439,6 +439,52 @@ func (s *Scanner) getOrCreateTracker(device spineapi.DeviceRemoteInterface) *rem
 	return tracker
 }
 
+// DropDeviceForGeneration drops the tracker for ski if it is still bound to
+// the given (dead) device generation. Reports whether the tracker was dropped.
+//
+// A SHIP disconnection is reported as DeviceChange+ElementChangeRemove with
+// the dead remote device in the payload. spine-go dispatches application
+// events asynchronously, so that event can in principle race a reconnection
+// that already rebuilt the scan state on a fresh generation; the generation
+// check guarantees a late disconnect event can never wipe it.
+func (s *Scanner) DropDeviceForGeneration(ski string, dead spineapi.DeviceRemoteInterface) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tracker, ok := s.trackers[ski]
+	if !ok {
+		return false
+	}
+	if dead != nil && tracker.device != nil && tracker.device != dead {
+		return false // a newer generation already rebound the tracker — keep it
+	}
+	delete(s.trackers, ski)
+	return true
+}
+
+// DropDeviceIfStale drops the tracker for ski when it is bound to a device
+// generation other than current. Reports whether the tracker was dropped.
+//
+// Called when a SHIP connection becomes active, before scanning. A tracker
+// left over from the previous connection holds feature helpers bound to entity
+// objects of a dead generation: every read targets the closed SHIP connection
+// (failing silently at debug level) and every render replays its stale cache —
+// the daemon keeps emitting NDJSON with unchanged values, so HA entities freeze
+// with no error anywhere. A tracker already bound to the current generation is
+// kept untouched.
+func (s *Scanner) DropDeviceIfStale(ski string, current spineapi.DeviceRemoteInterface) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tracker, ok := s.trackers[ski]
+	if !ok {
+		return false
+	}
+	if current != nil && tracker.device == current {
+		return false
+	}
+	delete(s.trackers, ski)
+	return true
+}
+
 // entityAddressString renders a SPINE entity address (e.g. "3.1") for logging
 // and for use as the NDJSON "entity" field. Kept here (not in export.go)
 // because it is state/identity manipulation, not presentation.
