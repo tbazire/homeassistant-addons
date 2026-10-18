@@ -114,6 +114,34 @@ broker, otherwise discovery messages will not reach the instance.
 2. After 3 failures, `eebus-bridge` exits so s6-overlay restarts the whole
    add-on.
 
+### SHIP reconnection (0.11.0-dev)
+
+A SHIP connection to a device can drop and come back on its own: the device
+reboots, the router renews its DHCP leases, a network blip interrupts the
+stream. spine-go then builds a **fresh remote device object** and re-runs the
+detailed discovery, while ship-go's hub re-establishes the connection by
+itself — no add-on restart needed.
+
+Everything bound to the previous connection generation must follow, and since
+0.11.0-dev it does:
+
+1. The disconnection arrives as a SPINE `DeviceChange+Remove` event carrying
+   the dead device object. The scanner drops its tracker for that SKI (feature
+   helpers, failed-request cache) and the daemon stops exactly that
+   generation's pollers. A generational check makes a late disconnect event
+   unable to wipe state a newer connection already rebuilt (events are
+   dispatched asynchronously).
+2. On reconnection, a defensive rebind drops any tracker still bound to an
+   older generation, then the scan and the `EntityChange+Add` events rebuild
+   helpers and pollers on the new generation.
+
+Before 0.11.0-dev, step 1–2 did not exist: after the first reconnection the
+scanner kept reading through helpers bound to the dead generation, so entities
+froze with the last known values while the EEBUS exchange itself stayed alive
+in the logs — the "works for days, then freezes" bug. The log line
+`remote device generation gone: ski=… — scan state dropped for rebind` marks
+each reconnection handled this way.
+
 ## Update / backup
 
 - **Backup**: HA's add-on backup captures `/data`, which contains the SHIP
@@ -130,6 +158,7 @@ broker, otherwise discovery messages will not reach the instance.
 | Nothing happens at startup | Add-on logs (stderr of `eebusd`). Set `log_level: trace`. |
 | Pairing stuck | `pairing state [...]` log lines. The device's own UI may also show the handshake. |
 | Measurements not updating | Set `poll_interval: 30`; check the device is online; check MQTT messages with `mosquitto_sub -t 'eebus/#' -v`, or set `log_level: debug` to see every published message in the add-on log. |
+| Entities frozen for days while EEBUS traffic continues in the log | This was the missing SHIP-reconnection rebind, fixed in 0.11.0-dev (see *Lifecycle → SHIP reconnection*). On this version, each reconnection logs `remote device generation gone … scan state dropped for rebind` and values resume on their own; if you still see the freeze, capture the log around `remote service CONNECTED` and report it. |
 | MQTT traffic in detail | Set `log_level: debug` (or `trace`): every outgoing publish (`mqtt publish`), subscription (`mqtt subscribe`) and incoming message (`mqtt recv`) is logged with topic and payload — no direct access to the broker needed. `state publish skipped` lines mark values the mapper deliberately did not publish (e.g. button components, which have no state). |
 | External broker unreachable | Check `mqtt.host`/`port`/credentials in the add-on config; for TLS brokers set `mqtt.ssl: true` (and usually port `8883`). The add-on log shows which broker was resolved at startup. |
 | HA sensors missing | Confirm discovery messages: `mosquitto_sub -t 'homeassistant/sensor/eebus_bridge/#' -v`. |

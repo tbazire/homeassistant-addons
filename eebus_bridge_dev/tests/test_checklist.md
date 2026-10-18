@@ -115,6 +115,24 @@ announce the HVAC use cases over SPINE (`DHWCircuit` / `HVACRoom` /
 - [ ] Killing `eebusd` inside the container: the bridge restarts it (≤3x),
       then exits so s6 restarts the add-on.
 
+### SHIP reconnection (0.11.0-dev, needs a real device — soak time)
+
+The frozen-entities regression class: everything below must recover WITHOUT
+restarting the add-on. `log_level: debug` makes the transitions visible.
+
+- [ ] Reboot the EEBUS device (or power-cycle the router): the log shows
+      `<<< remote service DISCONNECTED`, then `remote device generation gone:
+      ski=… — scan state dropped for rebind`, then
+      `>>> remote service CONNECTED`, and entity values resume on their own
+      within a poll interval.
+- [ ] After the reconnection, values keep refreshing long-term (no freeze
+      after the first successful update on the new generation).
+- [ ] `periodic poller start` appears once per entity per connection — not
+      once per entity per poll tick, and not N times for N reconnections
+      (poller replacement, not accumulation).
+- [ ] Write commands still route after a reconnection (the write use cases
+      resolve entities against the current generation).
+
 ## 9. Security posture
 
 - [ ] No secret in the logs after a full run with `log_level: trace`.
