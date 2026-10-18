@@ -10,6 +10,52 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [0.5.0] - 2026-10-18
+
+Migration of the dev-channel reconnect fix (`0.11.0-dev`) to the production
+add-on, plus add-on store branding. Fixes the frozen-entities bug reported on
+both channels: after a few days of uptime, the Home Assistant entities stopped
+updating while the EEBUS exchange with the device itself stayed visibly alive
+in the logs, and only an add-on restart brought the values back — until the
+next occurrence.
+
+The root cause is in the daemon's scanner, not in the MQTT path: spine-go
+builds a **fresh remote device object on every SHIP (re)connection** and
+re-fires `EntityChange+Add` for every entity, but the scanner kept its per-SKI
+scan state forever, bound to the *previous* generation's entity objects. The
+trigger is any SHIP reconnection: a device reboot, a router/DHCP renewal, a
+network blip — hence "works for days, then freezes".
+
+### Added
+
+- **Add-on branding**: `icon.png` (128×128) and `logo.png` (256×256), built
+  from the official [EEBUS](https://www.eebus.org) round logo, so the add-on
+  shows the EEBUS identity in the Home Assistant add-on store. Store assets
+  are read from the repository by the Supervisor store cache — no reinstall
+  is needed for them to appear.
+
+### Fixed
+
+- **Scanner state is now rebound on reconnection.** The tracker (feature
+  helpers, failed-request cache) is dropped when the connection ends
+  (`DeviceChange+Remove`, which spine-go fires for *every* disconnection,
+  even a failed handshake) and rebuilt on the next connection. Before the fix,
+  reads kept targeting the closed SHIP connection (failing silently at debug
+  level) and renders kept replaying the stale cache — eebusd kept emitting
+  NDJSON with unchanged values, the bridge kept publishing them, so entities
+  froze with no error anywhere. A generational check (pointer identity of the
+  remote device) makes a late disconnect event unable to wipe state a newer
+  connection already rebuilt (spine-go dispatches application events
+  asynchronously), and a defensive rebind also runs when a connection becomes
+  active.
+- **Per-entity pollers are replaced instead of leaked.** A poller goroutine
+  was started for every `EntityChange+Add` event and only ever stopped by
+  process shutdown: each reconnection leaked one poller per entity, ticking
+  against the dead generation. Pollers are now registered per
+  (SKI, entity address): starting a new one cancels and replaces the previous,
+  and a disconnect stops exactly the superseded generation's pollers — never
+  those of a reconnection already in flight.
+
 ## [0.4.0] - 2026-09-24
 
 Migration of the dev channel (validated up to `0.10.0-dev` on a real device)
@@ -230,7 +276,9 @@ modification de la generation des fichier json
 - SHIP pairing secret optional, stored as an HA `password` option.
 - Persistent state scoped to `/data`.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/tbazire/homeassistant-addons/releases/tag/v0.5.0
+[0.4.0]: https://github.com/tbazire/homeassistant-addons/releases/tag/v0.4.0
 [0.3.0]: https://github.com/tbazire/homeassistant-addons/releases/tag/v0.3.0
 [0.2.0]: https://github.com/tbazire/homeassistant-addons/releases/tag/v0.2.0
 [0.1.3-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/v0.1.3-dev
