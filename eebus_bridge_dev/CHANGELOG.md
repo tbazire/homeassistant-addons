@@ -21,7 +21,13 @@ CI workflow.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Add-on branding**: `icon.png` (128×128) and `logo.png` (256×256), built
+  from the official [EEBUS](https://www.eebus.org) round logo, so the add-on
+  shows the EEBUS identity in the Home Assistant add-on store. Store assets
+  are read from the repository by the Supervisor store cache — no add-on
+  update or reinstall is needed for them to appear.
 
 ## [0.11.0-dev] - 2026-10-18
 
