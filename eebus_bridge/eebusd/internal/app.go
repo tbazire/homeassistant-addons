@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -71,6 +72,27 @@ type App struct {
 	// reprints cached values now (no more pull-on-data-change).
 	pollCtx    context.Context
 	pollCancel context.CancelFunc
+
+	// pollers tracks every running per-entity poller by "ski/entityAddress" so
+	// a poller can be cancelled and replaced. A SHIP reconnection re-fires
+	// EntityChange+Add for every entity on a fresh device generation; without
+	// this registry the superseded pollers would keep issuing requests for the
+	// dead connection forever (one leaked goroutine per entity per
+	// reconnection, until process exit).
+	pollersMu sync.Mutex
+	pollers   map[string]*entityPoller
+}
+
+// entityPoller is one running per-entity poller. device is the remote device
+// generation the poller was started for: it identifies which generation a
+// poller belongs to when a disconnection stops exactly the superseded ones —
+// and never pollers of a freshly reconnected generation (application events
+// are dispatched asynchronously, so the disconnect event of the old
+// connection can race the setup of the new one).
+type entityPoller struct {
+	device spineapi.DeviceRemoteInterface
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // NewApp constructs the App from a parsed Config. It does not yet Setup/Start
@@ -81,6 +103,7 @@ func NewApp(cfg *Config, logger *Logger) *App {
 		logger:         logger,
 		pairingState:   make(map[string]string),
 		registeredSKIs: make(map[string]struct{}),
+		pollers:        make(map[string]*entityPoller),
 		out:            os.Stdout,
 	}
 }
@@ -575,6 +598,13 @@ func (a *App) RemoteServiceConnected(_ api.ServiceInterface, identity shipapi.Se
 		AppLog.Warnf("connected callback: no remote device for SKI %s yet", identity.SKI)
 		return
 	}
+	// A connection just became active. Any scan state still bound to a previous
+	// device generation is obsolete: its helpers target the closed SHIP
+	// connection and its renders replay the stale cache forever. Drop it so the
+	// scan below and the EntityChange+Add events of the new generation rebind
+	// everything fresh. (Normally the DeviceChange+Remove event of the old
+	// connection already did this; this is the belt to its suspenders.)
+	a.scanner.DropDeviceIfStale(identity.SKI, rDevice)
 	a.scanner.ScanRemoteDevice(rDevice)
 }
 
@@ -734,6 +764,23 @@ func (a *App) HandleEvent(payload spineapi.EventPayload) {
 	AppLog.Debugf("HandleEvent: type=%v change=%v ski=%s function=%v entity=%s type=%s",
 		payload.EventType, payload.ChangeType, payload.Ski, payload.Function, entityAddr, entityType)
 	switch payload.EventType {
+	case spineapi.EventTypeDeviceChange:
+		// spine-go reports EVERY SHIP disconnection as DeviceChange+Remove
+		// (RemoveRemoteDeviceConnection), including connections whose handshake
+		// never completed. The payload carries the dead device generation: drop
+		// exactly its scan state and pollers, so the next connection rebuilds
+		// them against the new generation. Without this, the scanner would keep
+		// reading through helpers bound to the dead device — requests vanish
+		// into the closed connection and renders replay its stale cache forever,
+		// which froze HA entities after the first reconnection (device reboot,
+		// router renew, network blip) with no error anywhere.
+		if payload.ChangeType == spineapi.ElementChangeRemove && payload.Ski != "" {
+			if a.scanner.DropDeviceForGeneration(payload.Ski, payload.Device) {
+				AppLog.Infof("remote device generation gone: ski=%s — scan state dropped for rebind",
+					maskSKI(payload.Ski))
+			}
+			a.stopEntityPollersForDevice(payload.Ski, payload.Device)
+		}
 	case spineapi.EventTypeEntityChange:
 		switch payload.ChangeType {
 		case spineapi.ElementChangeAdd:
@@ -786,27 +833,54 @@ func (a *App) HandleEvent(payload spineapi.EventPayload) {
 // ticks at cfg.PollInterval. If PollInterval <= 0, only the initial pull runs
 // (subscription-only mode: subsequent refreshes rely entirely on DataChange).
 //
-// The goroutine exits when pollCtx is cancelled (Shutdown) or when pollCtx is
-// done for any other reason.
+// Exactly one poller per (ski, entity address) stays alive: starting one for a
+// key that already has a running poller cancels and replaces it. A SHIP
+// reconnection re-fires EntityChange+Add for every entity on a fresh device
+// generation, so without this replacement the superseded pollers would keep
+// issuing requests for the dead connection forever (one leaked goroutine per
+// entity per reconnection, until process exit).
 func (a *App) startEntityPoller(device spineapi.DeviceRemoteInterface, entity spineapi.EntityRemoteInterface, ski, addr string) {
 	interval := a.cfg.PollInterval
-	if interval <= 0 {
-		// Subscription-only: one delayed initial pull, no ticker.
-		time.AfterFunc(2*time.Second, func() {
-			AppLog.Debugf("initial RequestEntityData (one-shot): ski=%s entity=%s", ski, addr)
-			a.scanner.RequestEntityData(device, entity)
-		})
-		return
+	key := ski + "/" + addr
+
+	// Cancel and replace any poller still running for this (ski, entity). The
+	// replacement is always the newest generation's poller.
+	a.pollersMu.Lock()
+	if prev, ok := a.pollers[key]; ok {
+		prev.cancel()
 	}
+	pctx, cancel := context.WithCancel(a.pollCtx)
+	handle := &entityPoller{device: device, ctx: pctx, cancel: cancel}
+	a.pollers[key] = handle
+	a.pollersMu.Unlock()
 
 	go func() {
-		// Initial delay before the first pull (same rationale as the one-shot
-		// path: possible operations are not known yet at EntityChange time).
+		// Leave the registry on exit — but never the entry of a poller that
+		// replaced us in the meantime.
+		defer func() {
+			a.pollersMu.Lock()
+			if a.pollers[key] == handle {
+				delete(a.pollers, key)
+			}
+			a.pollersMu.Unlock()
+		}()
+
+		// Initial delay before the first pull (same rationale as before: possible
+		// operations are not known yet at EntityChange time). Cancellable so a
+		// superseded poller never issues its first pull against a dead
+		// generation.
 		select {
-		case <-a.pollCtx.Done():
+		case <-pctx.Done():
 			return
 		case <-time.After(2 * time.Second):
 		}
+
+		if interval <= 0 {
+			AppLog.Debugf("initial RequestEntityData (one-shot): ski=%s entity=%s", ski, addr)
+			a.scanner.RequestEntityData(device, entity)
+			return
+		}
+
 		AppLog.Debugf("periodic poller start: ski=%s entity=%s interval=%s", ski, addr, interval)
 		// First pull.
 		a.scanner.RequestEntityData(device, entity)
@@ -815,7 +889,7 @@ func (a *App) startEntityPoller(device spineapi.DeviceRemoteInterface, entity sp
 		defer ticker.Stop()
 		for {
 			select {
-			case <-a.pollCtx.Done():
+			case <-pctx.Done():
 				AppLog.Debugf("periodic poller stop: ski=%s entity=%s", ski, addr)
 				return
 			case <-ticker.C:
@@ -823,6 +897,27 @@ func (a *App) startEntityPoller(device spineapi.DeviceRemoteInterface, entity sp
 			}
 		}
 	}()
+}
+
+// stopEntityPollersForDevice cancels every poller started for the given device
+// generation of ski. Called when a SHIP connection ends: pollers of the dead
+// generation must not keep issuing requests into the closed connection.
+// Pollers of a newer generation (a reconnection may already be in flight —
+// application events are dispatched asynchronously) are left untouched.
+func (a *App) stopEntityPollersForDevice(ski string, device spineapi.DeviceRemoteInterface) {
+	prefix := ski + "/"
+	a.pollersMu.Lock()
+	defer a.pollersMu.Unlock()
+	for key, handle := range a.pollers {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		if device != nil && handle.device != device {
+			continue
+		}
+		handle.cancel()
+		delete(a.pollers, key)
+	}
 }
 
 func entityAddrString(e spineapi.EntityRemoteInterface) string {
