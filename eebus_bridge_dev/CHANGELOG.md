@@ -21,6 +21,19 @@ CI workflow.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.12.0-dev] - 2026-10-29
+
+Diagnosed from the debug logs of
+[#52](https://github.com/tbazire/homeassistant-addons/issues/52) (Vaillant
+VR921): the bridge kept publishing every poll tick, but one data point was the
+device itself reporting a placeholder number — room temperature = 0 with
+`valueState=error` on every read — which surfaced as a false 0 °C in Home
+Assistant, while a valid tank temperature legitimately sat still for hours.
+Together with the retained states below, "the sensors only update once" and
+"sensors show unknown after a restart" both get structurally addressed.
+
 ### Added
 
 - **Add-on branding**: `icon.png` (128×128) and `logo.png` (256×256), built
@@ -28,6 +41,27 @@ CI workflow.
   shows the EEBUS identity in the Home Assistant add-on store. Store assets
   are read from the repository by the Supervisor store cache — no add-on
   update or reinstall is needed for them to appear.
+
+### Fixed
+
+- **Measurements the device reports as invalid are no longer published.**
+  SPINE qualifies every value with a `valueState` (`normal`, `outOfRange`,
+  `error`); the exporter used to ignore it and forwarded the raw number, so a
+  device-flagged-bad 0 became a real-looking 0 °C sensor in HA. Values whose
+  state is not `normal` are now dropped before the NDJSON export (debug log:
+  `skip measurement id=… valueState=…`); values without a state qualifier are
+  still published (backward compatible).
+
+### Changed
+
+- **Sensor state messages are now published with MQTT retain.** Discovery
+  configs already were; states now persist in the broker too, so Home
+  Assistant (or any subscriber) restores the last known value immediately
+  after a HA/broker restart or reconnect instead of showing `unknown` until
+  the next poll tick. Transient events (`bridge/command_result`, bridge
+  status) deliberately stay unretained. Note: once retained, the last value
+  of a sensor stays visible even if the add-on is later removed without
+  clearing its topics.
 
 ## [0.11.0-dev] - 2026-10-18
 
@@ -1043,7 +1077,19 @@ OHPCF), with an architecture designed to grow without touching the bridge.
 - The code source is intentionally kept identical to the production add-on
   at fork time. Future dev-only changes will be listed here.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.4...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.12.0...HEAD
+[0.12.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.12.0
+[0.11.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.11.0
+[0.10.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.10.0
+[0.9.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.9.0
+[0.8.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.8.0
+[0.7.1-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.7.1
+[0.7.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.7.0
+[0.6.9-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.6.9
+[0.6.8-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.6.8
+[0.6.7-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.6.7
+[0.6.6-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.6.6
+[0.6.5-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.6.5
 [0.6.4-dev]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.3...dev-v0.6.4
 [0.6.3-dev]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.2...dev-v0.6.3
 [0.6.2-dev]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.6.1...dev-v0.6.2

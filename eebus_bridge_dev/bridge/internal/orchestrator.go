@@ -349,7 +349,11 @@ func (o *Orchestrator) publishState(mqtt *MQTTClient, topic, value string) {
 		o.logger.Debug("state publish skipped", "topic", topic, "value", value)
 		return
 	}
-	if err := mqtt.Publish(topic, false, []byte(value)); err != nil {
+	// Retained, like the discovery configs: a subscriber that (re)connects —
+	// HA core, the MQTT integration, an external dashboard — gets the last
+	// known value immediately instead of "unknown" until the next poll tick.
+	// Transient events (command_result, bridge status) stay unretained.
+	if err := mqtt.Publish(topic, true, []byte(value)); err != nil {
 		o.logger.Warn("state publish failed", "topic", topic, "err", err.Error())
 	}
 }
