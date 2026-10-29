@@ -287,3 +287,39 @@ func TestNormalizeUnit(t *testing.T) {
 		})
 	}
 }
+
+// ---- measurementIsRenderable tests ------------------------------------------
+
+// TestMeasurementIsRenderable pins the valueState gate on exported
+// measurements: the device qualifies every value with a state, and only
+// unqualified (legacy devices) or "normal" values may reach Home Assistant.
+// The regression behind this is issue #52: a Vaillant VR921 permanently
+// reports its room temperature data point as value 0 + valueState=error, and
+// that false 0 °C used to be published as a real reading.
+func TestMeasurementIsRenderable(t *testing.T) {
+	v := model.NewScaledNumberType(48)
+	state := func(s model.MeasurementValueStateType) *model.MeasurementValueStateType {
+		return &s
+	}
+
+	cases := []struct {
+		name string
+		d    model.MeasurementDataType
+		want bool
+	}{
+		{"nil value never renders", model.MeasurementDataType{}, false},
+		{"nil value with normal state", model.MeasurementDataType{ValueState: state(model.MeasurementValueStateTypeNormal)}, false},
+		{"no state qualifier renders", model.MeasurementDataType{Value: v}, true},
+		{"normal renders", model.MeasurementDataType{Value: v, ValueState: state(model.MeasurementValueStateTypeNormal)}, true},
+		{"error skipped", model.MeasurementDataType{Value: v, ValueState: state(model.MeasurementValueStateTypeError)}, false},
+		{"out of range skipped", model.MeasurementDataType{Value: v, ValueState: state(model.MeasurementValueStateTypeOutofrange)}, false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := measurementIsRenderable(c.d); got != c.want {
+				t.Errorf("measurementIsRenderable(%+v) = %v, want %v", c.d, got, c.want)
+			}
+		})
+	}
+}

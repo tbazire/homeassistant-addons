@@ -47,6 +47,15 @@ Tested device / model: ____________________   Date: __________
 
 - [ ] `mosquitto_sub -t 'homeassistant/sensor/eebus_bridge/#' -v` shows one
       discovery message per measurement, retained.
+- [ ] **States are retained (0.12.0-dev):** a fresh
+      `mosquitto_sub -t 'eebus/#/…/state' -v` (or a HA core restart) delivers
+      every sensor's last value immediately, without waiting for a poll tick.
+- [ ] **Error-state values skipped (0.12.0-dev):** a data point the device
+      reports with `valueState=error` produces no state publish (debug log:
+      `skip measurement id=… valueState=error`) and its sensor stays
+      `unknown` instead of showing a false value. Requires a device that
+      actually reports an invalid data point (e.g. VR921 room temperature);
+      skip if the device reports everything `normal`.
 - [ ] One HA **device** appears per EEBUS gateway, with correct brand/model.
 - [ ] Each sensor has a stable `unique_id` (survives restart, no duplicates).
 - [ ] With no `mqtt.host` set, the broker is auto-discovered from the

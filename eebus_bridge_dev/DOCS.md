@@ -66,11 +66,21 @@ a single Home Assistant **device**.
 
 ```
 Discovery   homeassistant/sensor/eebus_bridge/<unique_id>/config   (retained)
-State       <mqtt.prefix>/<ski>/<entity>/<id>/state
+State       <mqtt.prefix>/<ski>/<entity>/<id>/state                (retained, since 0.12.0-dev)
 ```
 
 `unique_id` is stable and derived from `ski + entity + measurement_id`, so a
 device reconnect does not create duplicate sensors.
+
+Both discovery and state messages are **retained**: a subscriber that
+(re)connects — HA core after a restart, the MQTT integration, an external
+dashboard — receives the last known value of every sensor immediately,
+without waiting for the next poll tick. Only transient events
+(`…/bridge/command_result`, `…/bridge/status`) are published unretained.
+Consequence to keep in mind: a sensor's last value stays visible in the
+broker even if the add-on is later removed (or the device stops reporting a
+valid value) — retained messages persist until overwritten or explicitly
+cleared.
 
 ### Broker resolution
 
@@ -159,6 +169,7 @@ each reconnection handled this way.
 | Pairing stuck | `pairing state [...]` log lines. The device's own UI may also show the handshake. |
 | Measurements not updating | Set `poll_interval: 30`; check the device is online; check MQTT messages with `mosquitto_sub -t 'eebus/#' -v`, or set `log_level: debug` to see every published message in the add-on log. |
 | Entities frozen for days while EEBUS traffic continues in the log | This was the missing SHIP-reconnection rebind, fixed in 0.11.0-dev (see *Lifecycle → SHIP reconnection*). On this version, each reconnection logs `remote device generation gone … scan state dropped for rebind` and values resume on their own; if you still see the freeze, capture the log around `remote service CONNECTED` and report it. |
+| A sensor shows an implausible value (e.g. 0 °C) that never changes | The device may be reporting that data point as invalid: SPINE carries a `valueState` per value, and some devices keep `error` with a placeholder number on a data point they cannot measure (observed on a Vaillant VR921 room temperature). Since 0.12.0-dev such values are **skipped** — the sensor stays `unknown` until the device reports a valid value, and each skip logs `skip measurement id=… valueState=…` at debug. Before 0.12.0-dev the raw number was published as a real reading. |
 | MQTT traffic in detail | Set `log_level: debug` (or `trace`): every outgoing publish (`mqtt publish`), subscription (`mqtt subscribe`) and incoming message (`mqtt recv`) is logged with topic and payload — no direct access to the broker needed. `state publish skipped` lines mark values the mapper deliberately did not publish (e.g. button components, which have no state). |
 | External broker unreachable | Check `mqtt.host`/`port`/credentials in the add-on config; for TLS brokers set `mqtt.ssl: true` (and usually port `8883`). The add-on log shows which broker was resolved at startup. |
 | HA sensors missing | Confirm discovery messages: `mosquitto_sub -t 'homeassistant/sensor/eebus_bridge/#' -v`. |
