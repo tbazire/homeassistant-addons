@@ -220,6 +220,23 @@ func (s *Scanner) renderConfigurationJSON(env envelope, dc *client.DeviceConfigu
 	}
 }
 
+// measurementIsRenderable reports whether a raw measurement entry should be
+// exported to the bridge: it must carry a value, and the device must not have
+// flagged that value as invalid. SPINE qualifies every value with a
+// valueState — "normal", "outOfRange" or "error". Some devices permanently
+// report a data point as error carrying a placeholder number (observed on a
+// Vaillant VR921: room temperature = 0 + valueState=error on every read);
+// publishing that number would surface a false reading in Home Assistant, so
+// only values without a state qualifier (backward compatible) or explicitly
+// "normal" are emitted. A nil Value means "no measurement yet" and must not
+// render as a 0 reading either.
+func measurementIsRenderable(d model.MeasurementDataType) bool {
+	if d.Value == nil {
+		return false
+	}
+	return d.ValueState == nil || *d.ValueState == model.MeasurementValueStateTypeNormal
+}
+
 func (s *Scanner) renderMeasurementsJSON(env envelope, m *client.Measurement) {
 	descs, err := m.GetDescriptionsForFilter(model.MeasurementDescriptionDataType{})
 	if err != nil {
@@ -251,11 +268,15 @@ func (s *Scanner) renderMeasurementsJSON(env envelope, m *client.Measurement) {
 	}
 
 	for _, d := range data {
-		// Skip entries without a real value: a nil Value pointer means "no
-		// measurement yet", which must not be rendered as 0 (it would be
-		// misinterpreted as a real zero by HA). Only entries that actually
-		// carry a ScaledNumber value are emitted.
-		if d.Value == nil {
+		if !measurementIsRenderable(d) {
+			// A non-nil value with a non-normal state is the device saying
+			// "this number is not a trustworthy reading". One debug line per
+			// skipped value, so "sensor shows unknown" can be explained from
+			// the log alone (nil values stay silent — there is nothing to
+			// explain, the data point just has no value yet).
+			if d.Value != nil && d.ValueState != nil {
+				logDebugf("  skip measurement id=%s valueState=%s", idStr(d.MeasurementId), string(*d.ValueState))
+			}
 			continue
 		}
 		desc := descByID[*d.MeasurementId]

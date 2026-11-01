@@ -109,3 +109,30 @@ func TestSubscribeLogsTopic(t *testing.T) {
 		t.Fatalf("subscription not logged as expected\n got: %q\nwant: %q", log.joined(), want)
 	}
 }
+
+// TestPublishStateRetainsLastValue pins that sensor states are published with
+// the MQTT retain flag set: like the discovery configs, the last known value
+// must survive in the broker so a reconnecting subscriber (HA core, MQTT
+// integration, external dashboard) sees it immediately instead of "unknown"
+// until the next poll tick. The publish itself fails here (never-connected
+// client) but the debug log line carries the retain flag we assert on.
+func TestPublishStateRetainsLastValue(t *testing.T) {
+	log := &recordingLogger{}
+	c := newTestClient(log)
+	o := &Orchestrator{logger: log}
+
+	o.publishState(c, "eebus/dev/3_1/0/state", "48")
+
+	want := formatLogLine("mqtt publish", "topic", "eebus/dev/3_1/0/state",
+		"payload", "48", "retain", true)
+	found := false
+	for _, l := range log.debugs {
+		if l == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("state publish not logged with retain=true\n got: %q\nwant: %q", log.joined(), want)
+	}
+}

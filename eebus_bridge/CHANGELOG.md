@@ -10,6 +10,39 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [0.5.1] - 2026-11-01
+
+Migration of the dev channel (`0.12.0-dev`, validated on a real device) to the
+production add-on. Diagnosed from the debug logs of
+[#52](https://github.com/tbazire/homeassistant-addons/issues/52) (Vaillant
+VR921): the bridge kept publishing every poll tick, but one data point was the
+device itself reporting a placeholder number — room temperature = 0 with
+`valueState=error` on every read — which surfaced as a false 0 °C in Home
+Assistant, while a valid tank temperature legitimately sat still for hours.
+Together with the retained states below, "the sensors only update once" and
+"sensors show unknown after a restart" both get structurally addressed.
+
+### Fixed
+
+- **Measurements the device reports as invalid are no longer published.**
+  SPINE qualifies every value with a `valueState` (`normal`, `outOfRange`,
+  `error`); the exporter used to ignore it and forwarded the raw number, so a
+  device-flagged-bad 0 became a real-looking 0 °C sensor in HA. Values whose
+  state is not `normal` are now dropped before the NDJSON export (debug log:
+  `skip measurement id=… valueState=…`); values without a state qualifier are
+  still published (backward compatible).
+
+### Changed
+
+- **Sensor state messages are now published with MQTT retain.** Discovery
+  configs already were; states now persist in the broker too, so Home
+  Assistant (or any subscriber) restores the last known value immediately
+  after a HA/broker restart or reconnect instead of showing `unknown` until
+  the next poll tick. Transient events (`bridge/command_result`, bridge
+  status) deliberately stay unretained. Note: once retained, the last value
+  of a sensor stays visible even if the add-on is later removed without
+  clearing its topics.
+
 ## [0.5.0] - 2026-10-18
 
 Migration of the dev-channel reconnect fix (`0.11.0-dev`) to the production
@@ -276,7 +309,8 @@ modification de la generation des fichier json
 - SHIP pairing secret optional, stored as an HA `password` option.
 - Persistent state scoped to `/data`.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/tbazire/homeassistant-addons/releases/tag/v0.5.1
 [0.5.0]: https://github.com/tbazire/homeassistant-addons/releases/tag/v0.5.0
 [0.4.0]: https://github.com/tbazire/homeassistant-addons/releases/tag/v0.4.0
 [0.3.0]: https://github.com/tbazire/homeassistant-addons/releases/tag/v0.3.0
