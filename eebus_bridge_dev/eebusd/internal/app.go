@@ -3,11 +3,13 @@ package internal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"eebusd/internal/scanner"
@@ -18,6 +20,7 @@ import (
 	shipapi "github.com/enbility/ship-go/api"
 	spineapi "github.com/enbility/spine-go/api"
 	"github.com/enbility/spine-go/model"
+	"github.com/gorilla/websocket"
 )
 
 // App wires together the eebus-go Service, the read-only use cases and the
@@ -81,6 +84,24 @@ type App struct {
 	// reconnection, until process exit).
 	pollersMu sync.Mutex
 	pollers   map[string]*entityPoller
+
+	// doubleConnLoops tracks consecutive SHIP close-4201 ("double connection")
+	// rejections per SKI. Some devices (observed on a Buderus MX400, issue #57)
+	// keep a wedged stale session and reject every reconnection attempt with
+	// 4201 — a loop only an SHIP-session reset (add-on restart) ever cured.
+	// When the tracker sees the loop signature, the daemon restarts itself so
+	// the same recovery happens automatically.
+	doubleConnLoops map[string]*doubleConnLoopState
+
+	// selfRestart tears the daemon down and exits non-zero so the bridge
+	// supervising eebusd restarts it with a fresh SHIP stack. Injectable so
+	// tests can observe the decision without killing the test process.
+	selfRestart func(reason string)
+
+	// restartStarted guards the self-restart against multiple concurrent
+	// triggers (several SKIs looping at once, or more 4201s arriving while the
+	// shutdown is in progress).
+	restartStarted atomic.Bool
 }
 
 // entityPoller is one running per-entity poller. device is the remote device
@@ -98,14 +119,17 @@ type entityPoller struct {
 // NewApp constructs the App from a parsed Config. It does not yet Setup/Start
 // the underlying service — call Setup() next.
 func NewApp(cfg *Config, logger *Logger) *App {
-	return &App{
-		cfg:            cfg,
-		logger:         logger,
-		pairingState:   make(map[string]string),
-		registeredSKIs: make(map[string]struct{}),
-		pollers:        make(map[string]*entityPoller),
-		out:            os.Stdout,
+	a := &App{
+		cfg:             cfg,
+		logger:          logger,
+		pairingState:    make(map[string]string),
+		registeredSKIs:  make(map[string]struct{}),
+		pollers:         make(map[string]*entityPoller),
+		doubleConnLoops: make(map[string]*doubleConnLoopState),
+		out:             os.Stdout,
 	}
+	a.selfRestart = a.selfRestartDaemon
+	return a
 }
 
 // Setup builds the TLS material, the eebus Configuration, the Service, wires
@@ -605,6 +629,9 @@ func (a *App) RemoteServiceConnected(_ api.ServiceInterface, identity shipapi.Se
 	// everything fresh. (Normally the DeviceChange+Remove event of the old
 	// connection already did this; this is the belt to its suspenders.)
 	a.scanner.DropDeviceIfStale(identity.SKI, rDevice)
+	// A working connection also proves any earlier 4201 rejections are over:
+	// clear the loop tracker so a future incident starts a fresh count.
+	a.resetDoubleConnectionLoop(identity.SKI)
 	a.scanner.ScanRemoteDevice(rDevice)
 }
 
@@ -662,6 +689,103 @@ func (a *App) ServiceUpdated(identity shipapi.ServiceIdentity) {
 	AppLog.Debugf("service updated: %s", identity.String())
 }
 
+// SHIP 12.x websocket close code a remote sends when it rejects a connection
+// because it still holds an older one for the same SKI ("Double connection").
+const shipCloseCodeDoubleConnection = 4201
+
+const (
+	// doubleConnLoopThreshold is how many consecutive close-4201 rejections
+	// within doubleConnLoopWindow are treated as a device-side
+	// double-connection loop. Two are enough: a healthy device emits at most
+	// one (a transient race its own SKI-comparison then resolves), while the
+	// wedged-session pattern repeats on every attempt. The false-positive
+	// cost is one daemon restart (a few seconds of downtime); the false
+	// negative cost is entities frozen until a manual restart.
+	doubleConnLoopThreshold = 2
+	// doubleConnLoopWindow: rejections further apart than this start a fresh
+	// count — the remote's stale session may have cleared on its own in
+	// between, and restarts must stay tied to an actual ongoing loop.
+	doubleConnLoopWindow = 10 * time.Minute
+)
+
+// doubleConnLoopState tracks consecutive SHIP 4201 rejections for one SKI.
+type doubleConnLoopState struct {
+	count  int
+	lastAt time.Time
+}
+
+// isShipDoubleConnectionClose reports whether err is (or wraps) a websocket
+// close carrying the SHIP "double connection" code (4201). Our own stack
+// never sends 4201 (it resolves double connections with a normal close per
+// SHIP 12.2.2), so this close always originates from the remote.
+func isShipDoubleConnectionClose(err error) bool {
+	var closeErr *websocket.CloseError
+	return errors.As(err, &closeErr) && closeErr.Code == shipCloseCodeDoubleConnection
+}
+
+// recordDoubleConnectionClose accounts one remote close-4201 rejection for
+// ski and triggers the self-restart once the loop signature is reached.
+//
+// Why a restart is the fix: the remote rejects the new connection because its
+// own stack still lists the previous session. That stale session's TCP path
+// may be perfectly alive (or half-open device-side), so our keepalive never
+// times it out and nothing at the SHIP layer tells the remote to let go of
+// it. Restarting the daemon closes every socket we own — the same reset that
+// cures the condition when done manually — and the bridge's supervisor then
+// brings a fresh SHIP stack up (with backoff, and escalating to a full add-on
+// restart if the loop survives repeated daemon restarts).
+func (a *App) recordDoubleConnectionClose(ski string) {
+	a.mu.Lock()
+	if a.doubleConnLoops == nil {
+		a.doubleConnLoops = make(map[string]*doubleConnLoopState)
+	}
+	now := time.Now()
+	st := a.doubleConnLoops[ski]
+	if st == nil || now.Sub(st.lastAt) > doubleConnLoopWindow {
+		st = &doubleConnLoopState{}
+		a.doubleConnLoops[ski] = st
+	}
+	st.count++
+	st.lastAt = now
+	count := st.count
+	a.mu.Unlock()
+
+	if count < doubleConnLoopThreshold {
+		AppLog.Warnf("SHIP double connection close (4201) from %s (occurrence %d/%d) — the remote still holds a stale session; watching for a loop",
+			ski, count, doubleConnLoopThreshold)
+		return
+	}
+
+	if !a.restartStarted.CompareAndSwap(false, true) {
+		return
+	}
+	a.selfRestart(fmt.Sprintf("SHIP double-connection loop with %s: %d close-4201 rejections within %s — restarting to reset the SHIP sessions",
+		ski, count, doubleConnLoopWindow))
+}
+
+// resetDoubleConnectionLoop clears the 4201 tracker for a ski. Called when a
+// pairing completes or a connection becomes active: from then on, a later
+// 4201 starts a fresh count instead of adding to history that no longer
+// describes the current connection.
+func (a *App) resetDoubleConnectionLoop(ski string) {
+	a.mu.Lock()
+	delete(a.doubleConnLoops, ski)
+	a.mu.Unlock()
+}
+
+// selfRestartDaemon is the production self-restart hook: log the reason, tear
+// the SHIP stack down cleanly (the mDNS announcement must go, same as on
+// SIGTERM) and exit non-zero so the bridge supervisor restarts eebusd with a
+// fresh hub. The teardown runs in its own goroutine: this is called from
+// eebus-go event goroutines and must not deadlock against their internals.
+func (a *App) selfRestartDaemon(reason string) {
+	AppLog.Errorf("unrecoverable condition — restarting daemon: %s", reason)
+	go func() {
+		a.Shutdown()
+		os.Exit(1)
+	}()
+}
+
 // ServicePairingDetailUpdate reports handshake progress. We watch for the
 // "remote denied trust" terminal state to bail out cleanly.
 func (a *App) ServicePairingDetailUpdate(identity shipapi.ServiceIdentity, detail *shipapi.ConnectionStateDetail) {
@@ -683,9 +807,13 @@ func (a *App) ServicePairingDetailUpdate(identity shipapi.ServiceIdentity, detai
 		a.service.UnregisterRemoteService(identity)
 	case shipapi.ConnectionStateCompleted:
 		AppLog.Infof("pairing COMPLETED with %s", identity.SKI)
+		a.resetDoubleConnectionLoop(identity.SKI)
 	case shipapi.ConnectionStateError:
 		if err := detail.Error(); err != nil {
 			AppLog.Errorf("pairing error with %s: %v", identity.SKI, err)
+			if isShipDoubleConnectionClose(err) {
+				a.recordDoubleConnectionClose(identity.SKI)
+			}
 		}
 	}
 }
