@@ -190,10 +190,12 @@ func newPollerTestApp(t *testing.T) *App {
 	sc := scanner.NewScanner(nil, scanner.Options{})
 	sc.SetDataOut(io.Discard)
 	return &App{
-		cfg:     &Config{PollInterval: time.Minute},
-		pollCtx: context.Background(),
-		pollers: make(map[string]*entityPoller),
-		scanner: sc,
+		cfg:            &Config{PollInterval: time.Minute},
+		pollCtx:        context.Background(),
+		pairingState:   make(map[string]string),
+		registeredSKIs: make(map[string]struct{}),
+		pollers:        make(map[string]*entityPoller),
+		scanner:        sc,
 	}
 }
 

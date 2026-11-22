@@ -23,6 +23,32 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.13.0-dev] - 2026-11-22
+
+Automatic recovery from the SHIP "double connection" loop reported in
+[#57](https://github.com/tbazire/homeassistant-addons/issues/57) (Buderus
+MX400): the device keeps a wedged stale session and rejects every
+reconnection attempt with the websocket close code 4201 ("Double
+connection") — entities stay frozen and pairing loops every few minutes,
+and only a manual add-on restart cured it.
+
+### Fixed
+
+- **The daemon now detects the double-connection loop and restarts itself.**
+  Close-4201 pairing rejections are counted per SKI (warn log
+  `SHIP double connection close (4201) from <ski> (occurrence 1/2) …`).
+  Two rejections within 10 minutes tear the SHIP stack down cleanly and exit
+  the daemon non-zero (`unrecoverable condition — restarting daemon: SHIP
+  double-connection loop with <ski> …`), so the bridge supervisor brings it
+  back with a fresh stack (2–30 s backoff) — the same reset that used to
+  require a manual restart, automated. If the loop survived repeated daemon
+  restarts, the existing escalation still ends in a full add-on restart.
+  The counter clears on a successful pairing or a working connection, and
+  rejections further apart than 10 minutes count as separate incidents, so
+  only an actual ongoing loop triggers the restart. Our own stack never
+  sends 4201 (double connections are resolved per SHIP 12.2.2 with a normal
+  close), so the detection cannot fire on our own behaviour.
+
 ## [0.12.0-dev] - 2026-10-29
 
 Diagnosed from the debug logs of
@@ -1077,7 +1103,8 @@ OHPCF), with an architecture designed to grow without touching the bridge.
 - The code source is intentionally kept identical to the production add-on
   at fork time. Future dev-only changes will be listed here.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.12.0...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.13.0...HEAD
+[0.13.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.13.0
 [0.12.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.12.0
 [0.11.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.11.0
 [0.10.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.10.0

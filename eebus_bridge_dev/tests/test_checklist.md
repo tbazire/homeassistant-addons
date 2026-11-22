@@ -142,6 +142,25 @@ restarting the add-on. `log_level: debug` makes the transitions visible.
 - [ ] Write commands still route after a reconnection (the write use cases
       resolve entities against the current generation).
 
+### SHIP double-connection loop (0.13.0-dev, needs a device that actually reports it)
+
+The Buderus-MX400-style failure (#57): the device holds a wedged stale
+session and rejects every reconnection with `websocket: close 4201: Double
+connection`. Requires such a device (or a way to wedge one); otherwise note
+"not reproducible" and move on.
+
+- [ ] While the device rejects with 4201, the log shows
+      `SHIP double connection close (4201) from <ski> (occurrence 1/2) …`
+      at warn level, and a second rejection within 10 min triggers
+      `unrecoverable condition — restarting daemon: SHIP double-connection
+      loop with <ski> …` followed by a bridge `starting eebusd`.
+- [ ] The daemon comes back, pairing succeeds, and entities resume without
+      any manual restart.
+- [ ] A single 4201 (transient) does NOT restart the daemon — only the
+      two-within-10-minutes signature does.
+- [ ] A successful pairing or reconnection clears the counter: a later
+      isolated 4201 stays at occurrence 1/2.
+
 ## 9. Security posture
 
 - [ ] No secret in the logs after a full run with `log_level: trace`.
