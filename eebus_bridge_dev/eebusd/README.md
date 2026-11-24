@@ -18,9 +18,10 @@ réimplémentait la pile SHIP/SPINE à la main.
 
 ## Pré-requis
 
-- Go ≥ 1.24 (le `toolchain` directive du `go.mod` télécharge automatiquement
-  la bonne version si ta machine a une version plus ancienne, à condition
-  d'avoir accès à `proxy.golang.org`)
+- Go ≥ 1.25 (les directives `go 1.25.0` du `go.mod` — x/net v0.55.0, le fix
+  sécurité GHSA-5cv4-jp36-h3mw, exige Go ≥ 1.25 — font télécharger
+  automatiquement la bonne toolchain si ta machine a une version plus ancienne,
+  à condition d'avoir accès à `proxy.golang.org`)
 - Accès réseau au `proxy.golang.org` (pour résoudre les pseudo-versions
   `ship-go` / `spine-go` de mai 2026)
 - mDNS fonctionnel sur la machine (Avahi sous Linux : service `avahi-daemon`)

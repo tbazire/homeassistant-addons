@@ -23,6 +23,36 @@ CI workflow.
 
 _Nothing yet._
 
+## [0.13.1-dev] - 2026-11-24
+
+Dependency security release: clears all 12 open Dependabot alerts (all
+medium) across the four Go module manifests of the repository. No functional
+change — the bumps are the minimum patched versions for the flagged
+advisories, validated by the full vet + race test suite.
+
+### Security
+
+- **`golang.org/x/net` v0.27.0/v0.50.0 → v0.55.0** in all three modules
+  (eebusd, vendored eebus-go, bridge). Fixes GHSA-5cv4-jp36-h3mw /
+  CVE-2026-25680 (HTML parser DoS, fixed in 0.55.0) plus, for the bridge's
+  older v0.27.0, GHSA-qxp5-gwg8-xv66 / CVE-2025-22870 (proxy bypass via IPv6
+  Zone IDs, fixed in 0.36.0) and GHSA-vvgc-356p-c3xw / CVE-2025-22872
+  (tokenizer XSS, fixed in 0.38.0). None of these code paths are used by the
+  bridge (it imports x/net only through paho's proxy support), but the bump
+  clears the alerts and removes the whole vulnerable range. **This forces the
+  Go toolchain to ≥ 1.25.0** (x/net v0.55.0's own requirement): the Docker
+  builder stage moves `golang:1.24-alpine` → `golang:1.25-alpine` and the
+  lint workflow moves `go-version` 1.24 → 1.25; the go directives of all
+  three modules move to `go 1.25.0`.
+- **`github.com/eclipse/paho.mqtt.golang` v1.5.0 → v1.5.1** in the bridge.
+  Fixes GHSA-32fw-gq77-f2f2 / CVE-2025-10543: strings longer than 65535 bytes
+  could be incorrectly encoded in MQTT packets. Practical exposure is low
+  (our payloads are small JSON states), but paho is the one library that
+  talks to an untrusted-adjacent network (the broker), so the fix is
+  warranted. (`go mod tidy` also classifies the direct imports of
+  ship-go/spine-go/gorilla-websocket as direct requires in eebusd's go.mod —
+  bookkeeping only.)
+
 ## [0.13.0-dev] - 2026-11-22
 
 Automatic recovery from the SHIP "double connection" loop reported in
@@ -1103,7 +1133,8 @@ OHPCF), with an architecture designed to grow without touching the bridge.
 - The code source is intentionally kept identical to the production add-on
   at fork time. Future dev-only changes will be listed here.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.13.0...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.13.1...HEAD
+[0.13.1-dev]: https://github.com/tbazire/homeassistant-addons/compare/dev-v0.13.0...dev-v0.13.1
 [0.13.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.13.0
 [0.12.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.12.0
 [0.11.0-dev]: https://github.com/tbazire/homeassistant-addons/releases/tag/dev-v0.11.0
