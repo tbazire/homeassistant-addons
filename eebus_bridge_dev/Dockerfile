@@ -9,23 +9,25 @@
 #   2. bridge-builder   : builds the static eebus-bridge binary.
 #   3. runtime          : HA base image (s6-overlay v3), non-root, minimal.
 #
-# Builders use the official golang image (pinned to 1.24, alpine-based) instead
+# Builders use the official golang image (pinned to 1.25, alpine-based) instead
 # of `apk add go` on the HA base. Reason: the Go version shipped by Alpine 3.21
-# community (1.23.5) is older than the `go 1.24.1` directive in go.mod, which
-# would fail the build. The golang image is kept current upstream and tracks
-# Go patch releases. The produced binaries are fully static (CGO_ENABLED=0)
-# and run on any Linux — including the musl-based HA runtime base.
+# community (1.23.5) is older than the `go 1.25.0` directives in go.mod, and
+# x/net v0.55.0 (security fix GHSA-5cv4-jp36-h3mw) itself requires Go >= 1.25.0,
+# which would fail the build. The golang image is kept current upstream and
+# tracks Go patch releases. The produced binaries are fully static
+# (CGO_ENABLED=0) and run on any Linux — including the musl-based HA runtime
+# base.
 #
 # The HA base image (BUILD_FROM, per-arch) is used ONLY for the runtime stage,
 # where s6-overlay + bashio are required.
 
 # ---- Stage 1: eebusd builder ------------------------------------------------
-# We use golang:1.24-alpine (official, multi-arch via QEMU on the CI runner).
+# We use golang:1.25-alpine (official, multi-arch via QEMU on the CI runner).
 # hadolint ignore=DL3007
 ARG BUILD_FROM
 ARG BUILD_ARCH
 ARG BUILD_VERSION
-FROM golang:1.24-alpine AS eebusd-builder
+FROM golang:1.25-alpine AS eebusd-builder
 
 WORKDIR /src/eebusd
 # Copy the vendored module first so dependency changes are a separate layer.
@@ -43,7 +45,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOFLAGS=-mod=vendor \
 
 # ---- Stage 2: eebus-bridge builder ------------------------------------------
 # hadolint ignore=DL3007
-FROM golang:1.24-alpine AS bridge-builder
+FROM golang:1.25-alpine AS bridge-builder
 
 WORKDIR /src/bridge
 COPY bridge/go.mod bridge/go.sum ./
