@@ -10,6 +10,54 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Nothing yet._
 
+## [0.6.0] - 2026-11-25
+
+Migration of the dev channel (`0.13.0-dev` + `0.13.1-dev`, validated on a
+real device) to the production add-on.
+
+### Fixed
+
+- **Automatic recovery from the SHIP "double connection" loop**
+  ([#57](https://github.com/tbazire/homeassistant-addons/issues/57), Buderus
+  MX400). Some devices keep a wedged stale SHIP session and reject every
+  reconnection attempt with the websocket close code 4201 ("Double
+  connection") — entities stay frozen and pairing loops every few minutes,
+  and until now only a manual add-on restart cured it. Close-4201 pairing
+  rejections are now counted per SKI (warn log `SHIP double connection close
+  (4201) from <ski> (occurrence 1/2) …`); two rejections within 10 minutes
+  tear the SHIP stack down cleanly and exit the daemon non-zero
+  (`unrecoverable condition — restarting daemon: SHIP double-connection loop
+  with <ski> …`), so the bridge supervisor brings it back with a fresh stack
+  (2–30 s backoff) — the same reset that used to require a manual restart,
+  automated. If the loop survived repeated daemon restarts, the existing
+  escalation still ends in a full add-on restart. The counter clears on a
+  successful pairing or a working connection, and rejections further apart
+  than 10 minutes count as separate incidents, so only an actual ongoing
+  loop triggers the restart. Our own stack never sends 4201 (double
+  connections are resolved per SHIP 12.2.2 with a normal close), so the
+  detection cannot fire on our own behaviour.
+
+### Security
+
+- **`golang.org/x/net` v0.27.0/v0.50.0 → v0.55.0** in all three modules
+  (eebusd, vendored eebus-go, bridge), clearing every open Dependabot alert
+  on the production manifests: GHSA-5cv4-jp36-h3mw / CVE-2026-25680 (HTML
+  parser DoS, fixed in 0.55.0) plus, for the bridge's older v0.27.0,
+  GHSA-qxp5-gwg8-xv66 / CVE-2025-22870 (proxy bypass via IPv6 Zone IDs) and
+  GHSA-vvgc-356p-c3xw / CVE-2025-22872 (tokenizer XSS). The bridge imports
+  x/net only through paho's proxy support and never parses HTML, so none of
+  the vulnerable code paths are reachable — the bump removes the whole
+  vulnerable version range. **This moves the Go toolchain to ≥ 1.25.0**
+  (x/net v0.55.0's own requirement): the Docker builder stages move
+  `golang:1.24-alpine` → `golang:1.25-alpine` and the go directives of all
+  three modules move to `go 1.25.0`; eebusd's `vendor/` tree is refreshed.
+- **`github.com/eclipse/paho.mqtt.golang` v1.5.0 → v1.5.1** in the bridge.
+  Fixes GHSA-32fw-gq77-f2f2 / CVE-2025-10543: strings longer than 65535
+  bytes could be incorrectly encoded in MQTT packets. Practical exposure is
+  low (our payloads are small JSON states), but paho is the one library that
+  talks to an untrusted-adjacent network (the broker), so the fix is
+  warranted.
+
 ## [0.5.1] - 2026-11-01
 
 Migration of the dev channel (`0.12.0-dev`, validated on a real device) to the
@@ -309,7 +357,8 @@ modification de la generation des fichier json
 - SHIP pairing secret optional, stored as an HA `password` option.
 - Persistent state scoped to `/data`.
 
-[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/tbazire/homeassistant-addons/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/tbazire/homeassistant-addons/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/tbazire/homeassistant-addons/releases/tag/v0.5.1
 [0.5.0]: https://github.com/tbazire/homeassistant-addons/releases/tag/v0.5.0
 [0.4.0]: https://github.com/tbazire/homeassistant-addons/releases/tag/v0.4.0
