@@ -152,6 +152,36 @@ in the logs — the "works for days, then freezes" bug. The log line
 `remote device generation gone: ski=… — scan state dropped for rebind` marks
 each reconnection handled this way.
 
+### SHIP double-connection loop (0.6.0)
+
+Some devices hold a **wedged stale session**: their SHIP stack still lists a
+previous connection as active, and they reject every reconnection attempt
+with the websocket close code **4201 "Double connection"** — our own stack
+never sends 4201 (it resolves double connections per SHIP 12.2.2), so this
+close always originates from the remote. Nothing at the SHIP layer can tell
+the device to let go of its stale session, and only a session reset ever
+cured it (observed on a Buderus MX400, issue #57: entities frozen, pairing
+looping `4201` every few minutes, add-on restart required).
+
+Since 0.6.0 the daemon detects the loop and recovers on its own:
+
+1. Each remote close-4201 pairing rejection is counted per SKI
+   (`SHIP double connection close (4201) from <ski> (occurrence 1/2) …` at
+   warn level).
+2. Two rejections within 10 minutes restart the daemon:
+   `unrecoverable condition — restarting daemon: SHIP double-connection loop
+   with <ski> …`. The bridge supervising `eebusd` brings it back with a fresh
+   SHIP stack (2–30 s backoff). A successful pairing or a working connection
+   clears the counter, and further 4201s beyond the window start a fresh
+   count — only an actual ongoing loop triggers anything.
+3. If the loop somehow survives repeated daemon restarts, the bridge
+   escalates to a full add-on restart after 3 failures — the exact cure that
+   used to be manual.
+
+A false positive costs one daemon restart (a few seconds of downtime, values
+retained over MQTT); the false negative cost was a frozen add-on until a
+human noticed.
+
 ## Update / backup
 
 - **Backup**: HA's add-on backup captures `/data`, which contains the SHIP
@@ -170,6 +200,7 @@ each reconnection handled this way.
 | Measurements not updating | Set `poll_interval: 30`; check the device is online; check MQTT messages with `mosquitto_sub -t 'eebus/#' -v`, or set `log_level: debug` to see every published message in the add-on log. |
 | Entities frozen for days while EEBUS traffic continues in the log | This was the missing SHIP-reconnection rebind, fixed in 0.5.0 (see *Lifecycle → SHIP reconnection*). On this version, each reconnection logs `remote device generation gone … scan state dropped for rebind` and values resume on their own; if you still see the freeze, capture the log around `remote service CONNECTED` and report it. |
 | A sensor shows an implausible value (e.g. 0 °C) that never changes | The device may be reporting that data point as invalid: SPINE carries a `valueState` per value, and some devices keep `error` with a placeholder number on a data point they cannot measure (observed on a Vaillant VR921 room temperature). Since 0.5.1 such values are **skipped** — the sensor stays `unknown` until the device reports a valid value, and each skip logs `skip measurement id=… valueState=…` at debug. Before 0.5.1 the raw number was published as a real reading. |
+| Log shows `websocket: close 4201: Double connection` and pairing loops | The device still holds a stale SHIP session and rejects every reconnection. Since 0.6.0 the daemon detects the loop and restarts itself (see *Lifecycle → SHIP double-connection loop*): expect `SHIP double connection close (4201) from <ski> (occurrence 1/2)`, then `unrecoverable condition — restarting daemon: SHIP double-connection loop …`, then a fresh `starting eebusd` from the bridge. If the loop survives several restarts, power-cycle the device — its session is wedged beyond what a reset from our side can clear. |
 | MQTT traffic in detail | Set `log_level: debug` (or `trace`): every outgoing publish (`mqtt publish`), subscription (`mqtt subscribe`) and incoming message (`mqtt recv`) is logged with topic and payload — no direct access to the broker needed. `state publish skipped` lines mark values the mapper deliberately did not publish (e.g. button components, which have no state). |
 | External broker unreachable | Check `mqtt.host`/`port`/credentials in the add-on config; for TLS brokers set `mqtt.ssl: true` (and usually port `8883`). The add-on log shows which broker was resolved at startup. |
 | HA sensors missing | Confirm discovery messages: `mosquitto_sub -t 'homeassistant/sensor/eebus_bridge/#' -v`. |
